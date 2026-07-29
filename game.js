@@ -1,5 +1,8 @@
 import Phaser from "phaser";
 import cropSheetUrl from "./assets/crops.png?url";
+import petPortraitsUrl from "./assets/pet-portraits.png?url";
+import petSpritesUrl from "./assets/pet-sprites.png?url";
+import petFacilitiesUrl from "./assets/pet-facilities.png?url";
 import "./game-core.js";
 
 const Core = window.UUHarvestCore;
@@ -36,7 +39,8 @@ const GAME_NAMES = {
   link: "连连看",
   zuma: "祖玛",
   match3: "消消乐",
-  market: "集市"
+  market: "集市",
+  pets: "宠物园"
 };
 
 const LINK_SYMBOLS = [
@@ -86,11 +90,30 @@ class HarvestCollection {
     this.zuma = null;
     this.match3 = null;
     this.robotJobs = [];
+    this.actionEffects = [];
+    this.maturePlots = new Set();
+    this.marketTab = "growth";
+    this.petShopTab = "pets";
     this.lastRobotScan = 0;
     this.frameNow = this.now();
     this.cropSheet = new Image();
     this.cropSheet.src = cropSheetUrl;
     this.cropSheet.onload = () => this.render();
+    this.petPortraits = new Image();
+    this.petPortraits.src = petPortraitsUrl;
+    this.petPortraits.onload = () => this.render();
+    this.petSprites = new Image();
+    this.petSprites.src = petSpritesUrl;
+    this.petSprites.onload = () => {
+      this.petSpriteCanvas = this.prepareChromaSprite(this.petSprites);
+      this.render();
+    };
+    this.petFacilities = new Image();
+    this.petFacilities.src = petFacilitiesUrl;
+    this.petFacilities.onload = () => {
+      this.petFacilityCanvas = this.prepareChromaSprite(this.petFacilities);
+      this.render();
+    };
 
     this.surface = scene.textures.createCanvas("uu-surface", WIDTH, HEIGHT);
     this.ctx = this.surface.context;
@@ -117,6 +140,9 @@ class HarvestCollection {
     window.desktop?.onClosing(() => this.save(true));
     if (window.desktop && this.state.alwaysOnTop) window.desktop.setAlwaysOnTop(true);
     if (this.state.view !== "farm" && this.state.view !== "market") this.ensureMiniGame(this.state.view);
+    this.state.plots.forEach((plot, index) => {
+      if (plot.crop && Core.cropProgress(plot, this.now()) >= 1) this.maturePlots.add(index);
+    });
     this.scanAutomation(true);
     this.render();
   }
@@ -135,6 +161,7 @@ class HarvestCollection {
 
   update(dt, shouldRender = true) {
     this.frameNow = this.now();
+    if (this.state.petGarden.unlocked) Core.syncPetGarden(this.state, this.frameNow);
     if (this.state.view === "zuma" && this.zuma) this.updateZuma(Math.min(dt, 0.05));
     if (this.link?.pendingFinish && this.frameNow >= this.link.lockedUntil) {
       this.finishLink(true);
@@ -161,6 +188,8 @@ class HarvestCollection {
     if (this.match3?.animation && this.frameNow > this.match3.animation.until + 30) {
       this.match3.animation = null;
     }
+    this.scanMaturityEffects();
+    this.actionEffects = this.actionEffects.filter((effect) => this.frameNow <= effect.until);
     this.updateAutomationRobots();
     if (this.toast && this.frameNow > this.toast.until) this.toast = null;
     this.save();
@@ -168,10 +197,50 @@ class HarvestCollection {
   }
 
   showToast(text, tone = "normal", duration = 1800) {
-    this.toast = { text, tone, until: this.now() + duration };
+    const startedAt = this.now();
+    this.toast = { text, tone, startedAt, until: startedAt + duration };
+  }
+
+  addActionEffect(type, data = {}, duration = 700) {
+    const startedAt = this.now();
+    this.actionEffects.push({
+      type,
+      view: Object.prototype.hasOwnProperty.call(data, "view") ? data.view : this.state.view,
+      ...data,
+      startedAt,
+      until: startedAt + duration,
+      duration
+    });
+  }
+
+  addResourceEffect(kind, delta, view = null) {
+    if (!delta) return;
+    this.addActionEffect("resource", { kind, delta, view }, 950);
+  }
+
+  effectProgress(effect) {
+    return clamp01((this.frameNow - effect.startedAt) / effect.duration);
+  }
+
+  scanMaturityEffects() {
+    this.state.plots.forEach((plot, index) => {
+      const mature = plot.crop && Core.cropProgress(plot, this.frameNow) >= 1;
+      if (mature && !this.maturePlots.has(index)) {
+        this.maturePlots.add(index);
+        this.addActionEffect("plot-mature", { plotIndex: index, view: "farm" }, 1100);
+      }
+      if (!mature) this.maturePlots.delete(index);
+    });
   }
 
   switchView(view) {
+    if (view === "pets" && !this.state.petGarden.unlocked) {
+      if (this.state.view !== "market") this.state.view = "market";
+      this.showToast("先在集市购买宠物园地契", "normal");
+      this.addActionEffect("view-transition", { view: this.state.view }, 320);
+      this.render();
+      return;
+    }
     const previousView = this.state.view;
     if (previousView === "link" && view !== "link" && this.link && !this.link.pausedAt) {
       this.link.pausedAt = this.now();
@@ -183,6 +252,7 @@ class HarvestCollection {
     this.state.view = view;
     this.state.selected = view === "farm" ? this.state.selected : this.state.selected;
     this.ensureMiniGame(view);
+    if (previousView !== view) this.addActionEffect("view-transition", { view }, 320);
     this.save(true);
     this.render();
   }
@@ -238,8 +308,10 @@ class HarvestCollection {
     const ctx = this.ctx;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
     if (stroke) {
       ctx.strokeStyle = stroke;
       ctx.lineWidth = line;
@@ -393,17 +465,18 @@ class HarvestCollection {
   }
 
   drawNav() {
-    const views = ["farm", "link", "zuma", "match3", "market"];
+    const views = ["farm", "link", "zuma", "match3", "market", "pets"];
     views.forEach((view, index) => {
-      const x = 12 + index * 188;
-      const hit = this.addHit("nav", x, 83, 180, 45, { view });
+      const x = 10 + index * 158;
+      const hit = this.addHit("nav", x, 83, 150, 45, { view });
       const active = this.state.view === view;
-      this.rounded(x, 83, 180, 45, 6, active ? C.coral : this.isHover(hit) ? C.yellowSoft : C.paper, C.ink, 2);
-      this.drawNavIcon(view, x + 29, 106, active);
-      this.text(GAME_NAMES[view], x + 95, 106, 15, active ? C.white : C.ink, "center", 900);
+      const petLocked = view === "pets" && !this.state.petGarden.unlocked;
+      this.rounded(x, 83, 150, 45, 6, active ? C.coral : this.isHover(hit) ? C.yellowSoft : petLocked ? C.paper2 : C.paper, C.ink, 2);
+      this.drawNavIcon(view, x + 25, 106, active);
+      this.text(petLocked ? "宠物园·锁" : GAME_NAMES[view], x + 84, 106, petLocked ? 11 : 13, active ? C.white : petLocked ? C.lock : C.ink, "center", 900);
       if (["link", "zuma", "match3"].includes(view)) {
         const done = this.state.festival[view];
-        this.circle(x + 163, 96, 6, done ? C.yellow : C.paper2, C.ink, 1);
+        this.circle(x + 136, 96, 6, done ? C.yellow : C.paper2, C.ink, 1);
       }
     });
   }
@@ -433,11 +506,19 @@ class HarvestCollection {
         this.rect(-5, -5, 10, 10, color, C.ink, 1);
         this.ctx.restore();
       });
-    } else {
+    } else if (view === "market") {
       this.rect(x - 13, y - 5, 26, 15, C.paper, C.ink, 2);
       this.rect(x - 16, y - 12, 32, 8, secondary, C.ink, 1);
       this.rect(x - 7, y, 7, 10, primary);
       this.rect(x + 4, y - 1, 6, 5, C.sky);
+    } else {
+      this.circle(x, y + 1, 11, secondary, C.ink, 2);
+      this.circle(x - 5, y - 10, 4, primary, C.ink, 1);
+      this.circle(x + 5, y - 10, 4, primary, C.ink, 1);
+      this.circle(x - 4, y, 2, C.ink);
+      this.circle(x + 4, y, 2, C.ink);
+      this.line(x - 3, y + 6, x, y + 8, C.ink, 2);
+      this.line(x, y + 8, x + 3, y + 6, C.ink, 2);
     }
   }
 
@@ -461,19 +542,308 @@ class HarvestCollection {
     this.drawNav();
     if (this.state.view === "farm") this.drawFarm();
     else if (this.state.view === "market") this.drawMarket();
+    else if (this.state.view === "pets") this.drawPetGarden();
     else if (this.state.view === "link") this.drawLink();
     else if (this.state.view === "zuma") this.drawZuma();
     else if (this.state.view === "match3") this.drawMatch3();
+    this.drawActionEffects();
     if (this.toast) this.drawToast();
     this.surface.refresh();
   }
 
   drawToast() {
+    const enter = easeOut((this.frameNow - this.toast.startedAt) / 150);
+    const leave = clamp01((this.toast.until - this.frameNow) / 180);
+    const alpha = Math.min(enter, leave);
     const width = Math.min(520, Math.max(210, 50 + this.toast.text.length * 14));
     const x = (WIDTH - width) / 2;
     const fill = this.toast.tone === "good" ? C.greenSoft : this.toast.tone === "bad" ? "#f2b1aa" : C.yellowSoft;
-    this.rounded(x, 91, width, 34, 7, fill, C.ink, 2);
-    this.text(this.toast.text, WIDTH / 2, 109, 13, C.ink, "center", 800);
+    this.ctx.save();
+    this.ctx.globalAlpha = alpha;
+    this.ctx.translate(WIDTH / 2, 108);
+    this.ctx.scale(0.94 + enter * 0.06, 0.94 + enter * 0.06);
+    this.rounded(-width / 2, -17, width, 34, 7, fill, C.ink, 2);
+    this.text(this.toast.text, 0, 1, 13, C.ink, "center", 800);
+    this.ctx.restore();
+  }
+
+  drawWaterDrop(x, y, size = 5, alpha = 1) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(x, y - size);
+    ctx.bezierCurveTo(x - size, y, x - size * 0.7, y + size, x, y + size);
+    ctx.bezierCurveTo(x + size * 0.7, y + size, x + size, y, x, y - size);
+    ctx.fillStyle = C.sky;
+    ctx.fill();
+    ctx.strokeStyle = C.blue;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawSpark(x, y, size = 6, color = C.yellow, alpha = 1) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    this.line(x - size, y, x + size, y, color, 2);
+    this.line(x, y - size, x, y + size, color, 2);
+    ctx.restore();
+  }
+
+  drawActionEffects() {
+    const headerX = {
+      coins: 305,
+      seedTickets: 397,
+      compost: 489,
+      orderSeals: 581,
+      sun: 673,
+      stars: 765
+    };
+    for (const effect of this.actionEffects) {
+      if (effect.view && effect.view !== this.state.view) continue;
+      const progress = this.effectProgress(effect);
+      const fade = 1 - easeInOut(progress);
+
+      if (effect.type === "view-transition") {
+        const sweepX = -180 + easeOut(progress) * 1320;
+        this.ctx.save();
+        this.ctx.globalAlpha = Math.sin(progress * Math.PI) * 0.16;
+        this.ctx.fillStyle = C.white;
+        this.ctx.transform(1, 0, -0.32, 1, 0, 0);
+        this.ctx.fillRect(sweepX, 128, 115, HEIGHT - 128);
+        this.ctx.restore();
+        continue;
+      }
+
+      if (effect.type === "resource") {
+        const x = headerX[effect.kind] || 305;
+        const color = effect.delta > 0 ? C.greenDark : C.coralDark;
+        this.ctx.save();
+        this.ctx.globalAlpha = fade;
+        this.text(`${effect.delta > 0 ? "+" : ""}${effect.delta}`, x + 28, 58 - progress * 20, 12 + Math.sin(progress * Math.PI) * 3, color, "center", 900);
+        this.ctx.restore();
+        continue;
+      }
+
+      if (effect.type === "button-ripple") {
+        const inset = easeOut(progress) * 8;
+        this.ctx.save();
+        this.ctx.globalAlpha = fade * 0.7;
+        this.rounded(
+          effect.x + inset,
+          effect.y + inset,
+          Math.max(2, effect.w - inset * 2),
+          Math.max(2, effect.h - inset * 2),
+          5,
+          null,
+          effect.tone === "good" ? C.greenDark : C.yellow,
+          3
+        );
+        this.ctx.restore();
+        continue;
+      }
+
+      if (effect.type.startsWith("plot-")) {
+        const bounds = this.plotBounds(effect.plotIndex);
+        const centerX = bounds.x + bounds.w / 2;
+        const centerY = bounds.y + 40;
+        if (effect.type === "plot-plant") {
+          const fall = easeOut(Math.min(1, progress * 1.7));
+          const seedY = bounds.y - 10 + fall * 48;
+          this.ctx.save();
+          this.ctx.translate(centerX, seedY);
+          this.ctx.rotate(progress * 4);
+          this.ctx.beginPath();
+          this.ctx.ellipse(0, 0, 5, 8, 0.5, 0, Math.PI * 2);
+          this.ctx.fillStyle = C.yellowSoft;
+          this.ctx.fill();
+          this.ctx.strokeStyle = C.soilDark;
+          this.ctx.stroke();
+          this.ctx.restore();
+          for (let particle = 0; particle < 7; particle += 1) {
+            const angle = particle * Math.PI / 3.5;
+            const distance = Math.sin(progress * Math.PI) * (15 + particle * 2);
+            this.circle(centerX + Math.cos(angle) * distance, bounds.y + 48 + Math.sin(angle) * distance * 0.35, 2, C.soilDark);
+          }
+        } else if (effect.type === "plot-water") {
+          this.ctx.save();
+          this.ctx.translate(bounds.x + 30, bounds.y + 14);
+          this.ctx.rotate(-0.35 + Math.sin(progress * Math.PI) * 0.25);
+          this.rounded(-13, -8, 24, 17, 4, C.sky, C.ink, 2);
+          this.line(10, -3, 20, 3, C.blue, 4);
+          this.line(-5, -8, -5, -15, C.ink, 2);
+          this.ctx.restore();
+          for (let drop = 0; drop < 9; drop += 1) {
+            const local = (progress * 1.8 + drop / 9) % 1;
+            this.drawWaterDrop(bounds.x + 52 + drop * 8, bounds.y + 17 + local * 48, 3, Math.sin(local * Math.PI));
+          }
+          this.ctx.save();
+          this.ctx.globalAlpha = fade * 0.3;
+          this.rounded(bounds.x + 4, bounds.y + 47, bounds.w - 8, 28, 4, C.blue);
+          this.ctx.restore();
+        } else if (effect.type === "plot-fertilize") {
+          this.ctx.save();
+          this.ctx.translate(bounds.x + 29, bounds.y + 18);
+          this.ctx.rotate(Math.sin(progress * Math.PI * 4) * 0.12);
+          this.rounded(-13, -14, 26, 28, 4, C.greenSoft, C.ink, 2);
+          this.text("肥", 0, 1, 12, C.greenDark, "center", 900);
+          this.ctx.restore();
+          for (let particle = 0; particle < 12; particle += 1) {
+            const local = (progress * 1.5 + particle / 12) % 1;
+            const angle = particle * 2.4;
+            this.circle(
+              centerX + Math.cos(angle) * (12 + local * 30),
+              bounds.y + 12 + local * 50,
+              2 + (particle % 2),
+              particle % 3 ? C.yellow : C.greenSoft,
+              C.greenDark,
+              1
+            );
+          }
+        } else if (effect.type === "plot-harvest") {
+          const targetX = 690;
+          const targetY = 486;
+          const fly = easeInOut(progress);
+          const arc = Math.sin(progress * Math.PI) * 60;
+          const x = centerX + (targetX - centerX) * fly;
+          const y = centerY + (targetY - centerY) * fly - arc;
+          this.ctx.save();
+          this.ctx.globalAlpha = 1 - Math.max(0, progress - 0.78) / 0.22;
+          this.ctx.translate(x, y);
+          this.ctx.rotate(progress * Math.PI * 2);
+          this.drawCropIcon(effect.cropId, 0, 0, 1.1 - progress * 0.35);
+          this.ctx.restore();
+          this.ctx.save();
+          this.ctx.globalAlpha = fade;
+          this.text(`+${effect.amount}`, centerX, bounds.y + 10 - progress * 22, 14, C.yellowSoft, "center", 900);
+          this.ctx.restore();
+        } else if (effect.type === "plot-soil") {
+          for (let ring = 0; ring < 3; ring += 1) {
+            const ringProgress = clamp01(progress * 1.4 - ring * 0.16);
+            this.ctx.save();
+            this.ctx.globalAlpha = (1 - ringProgress) * 0.8;
+            this.ctx.strokeStyle = C.yellow;
+            this.ctx.lineWidth = 3;
+            this.ctx.beginPath();
+            this.ctx.ellipse(centerX, centerY, 15 + ringProgress * 48, 7 + ringProgress * 22, 0, 0, Math.PI * 2);
+            this.ctx.stroke();
+            this.ctx.restore();
+          }
+        } else if (effect.type === "plot-unlock") {
+          this.ctx.save();
+          this.ctx.globalAlpha = fade * 0.75;
+          this.rounded(bounds.x, bounds.y, bounds.w * easeOut(progress), bounds.h, 5, C.greenSoft);
+          this.ctx.restore();
+          this.drawSpark(centerX, centerY, 9 + Math.sin(progress * Math.PI) * 8, C.yellow, fade);
+        } else if (effect.type === "plot-device") {
+          const radius = 8 + easeOut(progress) * 45;
+          this.ctx.save();
+          this.ctx.globalAlpha = fade;
+          this.circle(centerX, centerY, radius, null, effect.action === "placed" ? C.sky : C.coral, 3);
+          this.ctx.translate(centerX, centerY);
+          this.ctx.rotate(progress * Math.PI * 4);
+          for (let tooth = 0; tooth < 8; tooth += 1) {
+            const angle = tooth * Math.PI / 4;
+            this.rect(Math.cos(angle) * 18 - 2, Math.sin(angle) * 18 - 2, 4, 4, C.yellow);
+          }
+          this.ctx.restore();
+        } else if (effect.type === "plot-mature") {
+          const pulse = Math.sin(progress * Math.PI);
+          for (let spark = 0; spark < 8; spark += 1) {
+            const angle = spark * Math.PI / 4 + progress;
+            this.drawSpark(centerX + Math.cos(angle) * (20 + pulse * 24), centerY + Math.sin(angle) * (12 + pulse * 18), 4, C.yellow, fade);
+          }
+        } else if (effect.type === "plot-fail") {
+          const shake = Math.sin(progress * Math.PI * 8) * 6 * fade;
+          this.ctx.save();
+          this.ctx.globalAlpha = fade;
+          this.rounded(bounds.x + shake, bounds.y, bounds.w, bounds.h, 5, null, C.coralDark, 4);
+          this.ctx.restore();
+        }
+        continue;
+      }
+
+      if (effect.type === "order-deliver") {
+        const startX = 18 + effect.orderIndex * 205 + 98;
+        const startY = 193;
+        const fly = easeInOut(progress);
+        const x = startX + (305 - startX) * fly;
+        const y = startY + (40 - startY) * fly - Math.sin(progress * Math.PI) * 35;
+        this.ctx.save();
+        this.ctx.translate(x, y);
+        this.ctx.rotate(progress * 0.4);
+        this.rounded(-18, -13, 36, 26, 4, C.paper, C.ink, 2);
+        this.rect(-11, -6, 22, 4, C.coral);
+        this.ctx.restore();
+        for (let coin = 0; coin < 6; coin += 1) {
+          const angle = coin * Math.PI / 3;
+          this.circle(305 + Math.cos(angle) * progress * 25, 39 + Math.sin(angle) * progress * 18, 3, C.yellow, C.ink, 1);
+        }
+        continue;
+      }
+
+      if (effect.type === "warehouse-sell") {
+        for (let item = 0; item < 7; item += 1) {
+          const local = clamp01(progress * 1.35 - item * 0.06);
+          const startX = 700 + item * 18;
+          const x = startX + (305 - startX) * easeInOut(local);
+          const y = 495 + (40 - 495) * easeInOut(local) - Math.sin(local * Math.PI) * (35 + item * 5);
+          this.circle(x, y, 5, item % 2 ? C.green : C.yellow, C.ink, 1);
+        }
+        this.ctx.save();
+        this.ctx.globalAlpha = fade;
+        this.text(`+￥${effect.value}`, 760, 466 - progress * 28, 16, C.greenDark, "center", 900);
+        this.ctx.restore();
+        continue;
+      }
+
+      if (effect.type === "ui-success") {
+        const pulse = Math.sin(progress * Math.PI);
+        this.ctx.save();
+        this.ctx.globalAlpha = fade;
+        this.circle(effect.x, effect.y, 8 + pulse * 28, null, effect.color || C.yellow, 3);
+        for (let spark = 0; spark < 6; spark += 1) {
+          const angle = spark * Math.PI / 3;
+          this.drawSpark(effect.x + Math.cos(angle) * pulse * 34, effect.y + Math.sin(angle) * pulse * 25, 4, effect.color || C.yellow, fade);
+        }
+        this.ctx.restore();
+        continue;
+      }
+
+      if (effect.type === "pet-action") {
+        const actor = this.petActorPosition(effect.petId || this.state.petGarden.selectedPet);
+        const centerX = actor.x;
+        const centerY = actor.y - 38;
+        if (effect.action === "feed") {
+          for (let bit = 0; bit < 6; bit += 1) {
+            const local = clamp01(progress * 1.4 - bit * 0.08);
+            this.circle(180 + bit * 8 + (centerX - 210 - bit * 8) * local, 470 + (centerY - 470) * local - Math.sin(local * Math.PI) * 40, 4, C.soil, C.ink, 1);
+          }
+        } else if (effect.action === "pet") {
+          for (let heart = 0; heart < 7; heart += 1) {
+            const angle = heart * 0.9;
+            this.text("♥", centerX + Math.cos(angle) * (30 + progress * 45), centerY + Math.sin(angle) * 22 - progress * 70, 15, C.coral, "center", 900);
+          }
+        } else if (effect.action === "play") {
+          const x = centerX - 120 + progress * 210;
+          const y = centerY + 55 - Math.sin(progress * Math.PI) * 110;
+          this.circle(x, y, 13, C.yellow, C.ink, 2);
+          this.line(x - 8, y, x + 8, y, C.coral, 2);
+        } else if (effect.action === "bathe") {
+          for (let bubble = 0; bubble < 14; bubble += 1) {
+            const angle = bubble * 2.1;
+            this.circle(centerX + Math.cos(angle) * (30 + bubble % 4 * 12), centerY + 65 - progress * (60 + bubble * 5), 4 + bubble % 3, "rgba(255,255,255,0.65)", C.blue, 1);
+          }
+        } else {
+          for (let spark = 0; spark < 10; spark += 1) {
+            const angle = spark * Math.PI / 5;
+            this.drawSpark(centerX + Math.cos(angle) * (35 + progress * 45), centerY + Math.sin(angle) * (25 + progress * 30), 5, C.yellow, fade);
+          }
+        }
+      }
+    }
   }
 
   drawFarm() {
@@ -537,7 +907,47 @@ class HarvestCollection {
       if (plot.crop) {
         const crop = Core.cropById(plot.crop.cropId);
         const progress = Core.cropProgress(plot, this.frameNow);
-        this.drawCropIcon(crop.id, x + w / 2, y + 40, 0.85 + progress * 0.35);
+        const plantEffect = this.actionEffects.find((effect) => (
+          effect.type === "plot-plant"
+          && effect.plotIndex === index
+          && effect.until >= this.frameNow
+        ));
+        const plantProgress = plantEffect ? easeOut(this.effectProgress(plantEffect)) : 1;
+        const maturePulse = progress >= 1 ? 1 + Math.sin(this.frameNow / 170 + index) * 0.06 : 1;
+        const sway = Math.sin(this.frameNow / 520 + index * 1.7) * (progress >= 1 ? 0.055 : 0.025);
+        this.ctx.save();
+        this.ctx.translate(x + w / 2, y + 40 + (1 - plantProgress) * 15);
+        this.ctx.rotate(sway);
+        this.ctx.scale(maturePulse * plantProgress, maturePulse * plantProgress);
+        this.drawCropIcon(crop.id, 0, 0, 0.85 + progress * 0.35);
+        this.ctx.restore();
+        if (plot.crop.watered) {
+          const bob = Math.sin(this.frameNow / 260 + index) * 2;
+          this.drawWaterDrop(x + w - 14, y + 13 + bob, 4, 0.85);
+        }
+        if (plot.crop.fertilized) {
+          for (let spark = 0; spark < 3; spark += 1) {
+            const angle = this.frameNow / 700 + spark * Math.PI * 2 / 3 + index;
+            this.circle(
+              x + w / 2 + Math.cos(angle) * 28,
+              y + 39 + Math.sin(angle) * 15,
+              2,
+              spark % 2 ? C.yellow : C.greenSoft,
+              C.greenDark,
+              1
+            );
+          }
+        }
+        if (progress >= 1) {
+          for (let ray = 0; ray < 4; ray += 1) {
+            const angle = this.frameNow / 900 + ray * Math.PI / 2;
+            this.drawSpark(x + w / 2 + Math.cos(angle) * 31, y + 40 + Math.sin(angle) * 19, 3, C.yellow, 0.72);
+          }
+        }
+        if (plot.crop.rotationBonus) {
+          this.rounded(x + 7, y + 6, 39, 16, 4, C.greenSoft, C.greenDark, 1);
+          this.text("轮作+", x + 26, y + 14, 8, C.greenDark, "center", 900);
+        }
         this.rect(x + 27, y + h - 12, w - 54, 6, C.paper2);
         this.rect(x + 27, y + h - 12, (w - 54) * progress, 6, progress >= 1 ? C.yellow : C.green);
         this.text(progress >= 1 ? "成熟" : Core.formatDuration(plot.crop.finishAt - this.frameNow), x + w / 2, y + h - 21, 9, C.paper, "center", 800);
@@ -575,9 +985,19 @@ class HarvestCollection {
     const now = this.now();
     if (!force && now - this.lastRobotScan < 10_000) return;
     this.lastRobotScan = now;
-    for (const plotIndex of this.state.automationSlots.harvester) {
-      const plot = this.state.plots[plotIndex];
-      if (plot?.crop && Core.cropProgress(plot, now) >= 1) this.queueRobotJob("harvester", plotIndex, 2600);
+    if (this.state.automationEnabled.sprinkler) {
+      for (const plotIndex of this.state.automationSlots.sprinkler) {
+        const plot = this.state.plots[plotIndex];
+        if (plot?.crop && !plot.crop.watered && Core.cropProgress(plot, now) < 1) {
+          this.queueRobotJob("sprinkler", plotIndex, 2200);
+        }
+      }
+    }
+    if (this.state.automationEnabled.harvester) {
+      for (const plotIndex of this.state.automationSlots.harvester) {
+        const plot = this.state.plots[plotIndex];
+        if (plot?.crop && Core.cropProgress(plot, now) >= 1) this.queueRobotJob("harvester", plotIndex, 2600);
+      }
     }
   }
 
@@ -586,10 +1006,25 @@ class HarvestCollection {
     const now = this.now();
     for (const job of this.robotJobs) {
       const progress = (now - job.start) / job.duration;
+      if (job.type === "sprinkler" && progress >= 0.58 && !job.watered) {
+        job.watered = true;
+        const result = Core.water(this.state, job.plotIndex, now);
+        if (result.ok && this.state.view === "farm") {
+          this.addActionEffect("plot-water", { plotIndex: job.plotIndex, view: "farm" }, 900);
+          this.showToast("洒水机器人完成浇水", "good", 1300);
+        }
+      }
       if (job.type === "harvester" && progress >= 0.58 && !job.harvested) {
         job.harvested = true;
         const result = Core.harvest(this.state, job.plotIndex, now);
         if (result.ok && this.state.view === "farm") {
+          this.addActionEffect("plot-harvest", {
+            plotIndex: job.plotIndex,
+            cropId: result.crop.id,
+            amount: result.amount,
+            view: "farm"
+          }, 1050);
+          this.addResourceEffect("sun", Math.max(1, Math.floor(result.amount / 2)));
           this.showToast(`收菜机器人装箱 ${result.crop.name} ×${result.amount}`, "good", 1500);
         }
       }
@@ -597,7 +1032,7 @@ class HarvestCollection {
     this.robotJobs = this.robotJobs.filter((job) => now - job.start <= job.duration);
   }
 
-  drawRobot(type, x, y, phase, working = false) {
+  drawRobot(type, x, y, phase, working = false, disabled = false) {
     const bob = Math.sin(phase * Math.PI * 2) * 2;
     const wheelTurn = Math.floor(phase * 8) % 2;
     const body = type === "sprinkler" ? C.sky : C.yellow;
@@ -614,7 +1049,7 @@ class HarvestCollection {
     this.circle(-4, -1, 2, C.ink);
     this.circle(4, -1, 2, C.ink);
     this.line(0, -10, 0, -18, C.ink, 2);
-    this.circle(0, -20, 3, working ? C.coral : C.green, C.ink, 1);
+    this.circle(0, -20, 3, disabled ? C.lock : working ? C.coral : C.green, C.ink, 1);
     const armSwing = working ? Math.sin(phase * Math.PI * 8) * 7 : Math.sin(phase * Math.PI * 2) * 2;
     this.line(-15, -2, -22, 5 + armSwing, accent, 4);
     this.line(15, -2, 22, 5 - armSwing, accent, 4);
@@ -633,6 +1068,7 @@ class HarvestCollection {
     const drawAssigned = (type, plotIndex, order) => {
       const bounds = this.plotBounds(plotIndex);
       const job = this.robotJobs.find((entry) => entry.type === type && entry.plotIndex === plotIndex);
+      const enabled = this.state.automationEnabled[type];
       let phase = ((now / 1600) + plotIndex * 0.17 + order * 0.11) % 1;
       let x;
       let y;
@@ -667,12 +1103,19 @@ class HarvestCollection {
             );
           }
         }
-      } else {
+      } else if (enabled) {
         const patrol = (Math.sin(now / 1400 + plotIndex + order) + 1) / 2;
         x = bounds.x + 24 + patrol * (bounds.w - 48);
         y = bounds.y + (type === "sprinkler" ? 19 : 63);
+      } else {
+        phase = 0;
+        x = type === "sprinkler" ? bounds.x + 22 : bounds.x + bounds.w - 22;
+        y = bounds.y + (type === "sprinkler" ? 19 : 63);
       }
-      this.drawRobot(type, x, y, phase, Boolean(job));
+      this.ctx.save();
+      this.ctx.globalAlpha = enabled ? 1 : 0.58;
+      this.drawRobot(type, x, y, phase, Boolean(job), !enabled);
+      this.ctx.restore();
     };
 
     this.state.automationSlots.sprinkler.forEach((plotIndex, order) => drawAssigned("sprinkler", plotIndex, order));
@@ -702,8 +1145,19 @@ class HarvestCollection {
     if (selected.type === "soil") helper = "沃土改良：选择要永久提升品质的土地";
     this.text(helper, 18, 601, 10, C.greenDark, "left", 700);
     if (selected.type === "automation") {
-      this.button("退出布置", 512, 588, 112, 30, "tool", { tool: "hand" }, { size: 11, fill: C.paper2 });
+      this.button("退出布置", 250, 588, 104, 30, "tool", { tool: "hand" }, { size: 10, fill: C.paper2 });
     }
+    [
+      ["sprinkler", "自动浇水"],
+      ["harvester", "自动收菜"]
+    ].forEach(([type, label], index) => {
+      const enabled = this.state.automationEnabled[type];
+      this.button(`${label} ${enabled ? "开" : "关"}`, 365 + index * 130, 588, 120, 30, "auto-toggle", { itemId: type }, {
+        fill: enabled ? C.greenSoft : C.paper2,
+        color: enabled ? C.greenDark : C.lock,
+        size: 9
+      });
+    });
   }
 
   drawSeedShelf() {
@@ -741,20 +1195,37 @@ class HarvestCollection {
   usePlot(index) {
     if (index >= this.state.unlockedPlots) {
       if (index === this.state.unlockedPlots) {
+        const coinsBefore = this.state.coins;
         const result = Core.unlockNextPlot(this.state);
+        if (result.ok) {
+          this.addActionEffect("plot-unlock", { plotIndex: index, view: "farm" }, 950);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        } else {
+          this.addActionEffect("plot-fail", { plotIndex: index, view: "farm" }, 420);
+        }
         this.showToast(result.ok ? `解锁第 ${this.state.unlockedPlots} 块土地` : result.reason, result.ok ? "good" : "bad");
       }
       return;
     }
     const plot = this.state.plots[index];
     if (plot.crop && Core.cropProgress(plot, this.now()) >= 1 && this.state.selected.type !== "automation") {
+      const cropId = plot.crop.cropId;
+      const sunBefore = this.state.sun;
       const result = Core.harvest(this.state, index, this.now());
-      if (result.ok) this.robotJobs = this.robotJobs.filter((job) => job.plotIndex !== index);
+      if (result.ok) {
+        this.robotJobs = this.robotJobs.filter((job) => job.plotIndex !== index);
+        this.addActionEffect("plot-harvest", { plotIndex: index, cropId, amount: result.amount, view: "farm" }, 1050);
+        this.addResourceEffect("sun", this.state.sun - sunBefore);
+      } else {
+        this.addActionEffect("plot-fail", { plotIndex: index, view: "farm" }, 420);
+      }
       this.showToast(result.ok ? `收获 ${result.crop.name} ×${result.amount}，获得阳光` : result.reason, result.ok ? "good" : "bad");
       return;
     }
     let result;
     const selected = this.state.selected;
+    const coinsBefore = this.state.coins;
+    const compostBefore = this.state.compost;
     if (selected.type === "seed") result = Core.plant(this.state, index, selected.id, this.now());
     else if (selected.type === "water") result = Core.water(this.state, index, this.now());
     else if (selected.type === "fertilizer") result = Core.fertilize(this.state, index, this.now());
@@ -763,15 +1234,38 @@ class HarvestCollection {
     else if (selected.type === "automation") result = Core.toggleAutomation(this.state, selected.id, index);
     if (result) {
       let message = result.reason || "操作完成";
+      if (!result.ok) this.addActionEffect("plot-fail", { plotIndex: index, view: "farm" }, 420);
       if (result.ok && selected.type === "seed") {
+        this.addActionEffect("plot-plant", { plotIndex: index, cropId: result.crop.id, view: "farm" }, 720);
         message = `${result.crop.name}种下了`;
-        if (this.state.automationSlots.sprinkler.includes(index)) {
+        if (this.state.automationEnabled.sprinkler && this.state.automationSlots.sprinkler.includes(index)) {
           this.queueRobotJob("sprinkler", index, 1900);
           message += "，洒水机器人出发";
         }
       }
-      if (result.ok && selected.type === "soil") message = `土地品质提升到 ${result.soil} 级`;
+      if (result.ok && selected.type === "water") {
+        this.addActionEffect("plot-water", { plotIndex: index, view: "farm" }, 880);
+        message = "浇水完成，成长时间缩短";
+      }
+      if (result.ok && selected.type === "fertilizer") {
+        this.addActionEffect("plot-fertilize", { plotIndex: index, view: "farm" }, 950);
+        this.addResourceEffect("compost", this.state.compost - compostBefore);
+        this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        message = "施肥完成，肥力正在渗入";
+      }
+      if (result.ok && selected.type === "soil") {
+        this.addActionEffect("plot-soil", { plotIndex: index, view: "farm" }, 900);
+        message = `土地品质提升到 ${result.soil} 级`;
+      }
       if (result.ok && selected.type === "automation") message = result.action === "placed" ? "设备已安装" : "设备已收回";
+      if (result.ok && selected.type === "automation") {
+        this.addActionEffect("plot-device", {
+          plotIndex: index,
+          action: result.action,
+          device: selected.id,
+          view: "farm"
+        }, 760);
+      }
       if (result.ok && selected.type === "automation" && result.action === "removed") {
         this.robotJobs = this.robotJobs.filter((job) => !(job.type === selected.id && job.plotIndex === index));
       }
@@ -792,35 +1286,449 @@ class HarvestCollection {
     }
   }
 
+  drawPetPortrait(petId, x, y, size, options = {}) {
+    const type = Core.petType(petId);
+    if (!type) return;
+    const ctx = this.ctx;
+    const bob = options.bob ?? 0;
+    const scale = options.scale ?? 1;
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = options.alpha ?? 1;
+    ctx.translate(x, y + bob);
+    ctx.scale(scale, scale);
+    if (this.petPortraits.complete && this.petPortraits.naturalWidth) {
+      const cellW = this.petPortraits.naturalWidth / 2;
+      const cellH = this.petPortraits.naturalHeight / 2;
+      const sx = (type.portrait % 2) * cellW;
+      const sy = Math.floor(type.portrait / 2) * cellH;
+      ctx.drawImage(this.petPortraits, sx, sy, cellW, cellH, -size / 2, -size / 2, size, size);
+    } else {
+      this.circle(0, 0, size * 0.34, C.yellowSoft, C.ink, 3);
+      this.circle(-size * 0.2, -size * 0.23, size * 0.12, C.soil, C.ink, 2);
+      this.circle(size * 0.2, -size * 0.23, size * 0.12, C.soil, C.ink, 2);
+      this.circle(-size * 0.12, -size * 0.03, size * 0.035, C.ink);
+      this.circle(size * 0.12, -size * 0.03, size * 0.035, C.ink);
+    }
+    ctx.restore();
+  }
+
+  prepareChromaSprite(imageElement) {
+    const canvas = document.createElement("canvas");
+    canvas.width = imageElement.naturalWidth;
+    canvas.height = imageElement.naturalHeight;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(imageElement, 0, 0);
+    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = image.data;
+    const visited = new Uint8Array(canvas.width * canvas.height);
+    const queue = [];
+    const isBackground = (index) => {
+      const offset = index * 4;
+      const red = pixels[offset];
+      const green = pixels[offset + 1];
+      const blue = pixels[offset + 2];
+      return Math.min(red, green, blue) > 228 && Math.max(red, green, blue) - Math.min(red, green, blue) < 14;
+    };
+    const add = (index) => {
+      if (visited[index] || !isBackground(index)) return;
+      visited[index] = 1;
+      queue.push(index);
+    };
+    for (let x = 0; x < canvas.width; x += 1) {
+      add(x);
+      add((canvas.height - 1) * canvas.width + x);
+    }
+    for (let y = 0; y < canvas.height; y += 1) {
+      add(y * canvas.width);
+      add(y * canvas.width + canvas.width - 1);
+    }
+    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+      const index = queue[cursor];
+      pixels[index * 4 + 3] = 0;
+      const x = index % canvas.width;
+      if (x > 0) add(index - 1);
+      if (x < canvas.width - 1) add(index + 1);
+      if (index >= canvas.width) add(index - canvas.width);
+      if (index < canvas.width * (canvas.height - 1)) add(index + canvas.width);
+    }
+    ctx.putImageData(image, 0, 0);
+    return canvas;
+  }
+
+  petActorPosition(petId) {
+    const index = Math.max(0, Core.PET_TYPES.findIndex((pet) => pet.id === petId));
+    const phase = this.frameNow / 5200;
+    const routes = {
+      dog: {
+        x: 335 + Math.sin(phase * 1.25) * 135,
+        y: 445 + Math.sin(phase * 2.1) * 45,
+        facing: Math.cos(phase * 1.25) >= 0 ? 1 : -1,
+        pace: 1.2
+      },
+      cat: {
+        x: 445 + Math.sin(phase * 0.52 + 1.4) * 82,
+        y: 382 + Math.sin(phase * 0.8 + 0.5) * 32,
+        facing: Math.cos(phase * 0.52 + 1.4) >= 0 ? 1 : -1,
+        pace: 0.55
+      },
+      rabbit: {
+        x: 325 + Math.sin(phase * 1.8 + 2.2) * 102,
+        y: 505 + Math.sin(phase * 1.1) * 20,
+        facing: Math.cos(phase * 1.8 + 2.2) >= 0 ? 1 : -1,
+        pace: 1.8
+      },
+      chick: {
+        x: 112 + Math.cos(phase * 1.35) * 54,
+        y: 355 + Math.sin(phase * 1.35) * 38,
+        facing: -Math.sin(phase * 1.35) >= 0 ? 1 : -1,
+        pace: 1.35
+      }
+    };
+    const route = routes[petId] || routes.dog;
+    const roam = { x: route.x, y: route.y };
+    const behaviorCycle = (this.frameNow / ({ dog: 7200, cat: 9800, rabbit: 6200, chick: 5600 }[petId] || 7200) + index * 0.19) % 1;
+    const roamingAction = behaviorCycle > ({ dog: 0.9, cat: 0.7, rabbit: 0.91, chick: 0.86 }[petId] || 0.88)
+      ? "sleep"
+      : behaviorCycle < ({ dog: 0.7, cat: 0.34, rabbit: 0.58, chick: 0.74 }[petId] || 0.6)
+        ? "walk"
+        : "idle";
+    const effect = [...this.actionEffects].reverse().find((entry) => (
+      entry.type === "pet-action"
+      && entry.petId === petId
+      && entry.until >= this.frameNow
+    ));
+    if (!effect) {
+      return {
+        ...roam,
+        walking: roamingAction === "walk",
+        action: roamingAction,
+        facing: route.facing,
+        step: Math.sin(this.frameNow / (155 / route.pace) + index)
+      };
+    }
+    const targets = {
+      feed: { x: 205, y: 475 },
+      play: { x: 175, y: 470 },
+      bathe: { x: 500, y: 462 },
+      groom: { x: 540, y: 358 },
+      pet: roam
+    };
+    const progress = this.effectProgress(effect);
+    const travel = Math.sin(progress * Math.PI);
+    const target = targets[effect.action] || roam;
+    const action = progress < 0.24 || progress > 0.76
+      ? "walk"
+      : ({ feed: "feed", play: "play", bathe: "care", groom: "care", pet: "idle" }[effect.action] || "idle");
+    return {
+      x: roam.x + (target.x - roam.x) * travel,
+      y: roam.y + (target.y - roam.y) * travel,
+      walking: action === "walk",
+      action,
+      facing: target.x >= roam.x ? 1 : -1,
+      step: Math.sin(progress * Math.PI * 8)
+    };
+  }
+
+  drawPixelPetActor(petId, x, y, size = 68, options = {}) {
+    if (this.petSpriteCanvas) {
+      const type = Core.petType(petId);
+      const actionColumn = {
+        idle: 0,
+        walk: 1,
+        feed: 2,
+        play: 3,
+        care: 4,
+        sleep: 5
+      }[options.action || (options.walking ? "walk" : "idle")] || 0;
+      const cellWidth = this.petSpriteCanvas.width / 6;
+      const cellHeight = this.petSpriteCanvas.height / 4;
+      const facing = options.facing || 1;
+      const bounce = options.walking ? Math.abs(options.step || 0) * 2.5 : Math.sin(this.frameNow / 430 + type.portrait) * 1.4;
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y - bounce));
+      if (options.selected) {
+        ctx.save();
+        ctx.globalAlpha = 0.56 + Math.sin(this.frameNow / 210) * 0.14;
+        ctx.beginPath();
+        ctx.ellipse(0, 2, size * 0.42, size * 0.13, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = C.yellow;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 0.17;
+      ctx.beginPath();
+      ctx.ellipse(0, 3, size * 0.34, size * 0.1, 0, 0, Math.PI * 2);
+      ctx.fillStyle = C.ink;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.scale(facing, 1);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        this.petSpriteCanvas,
+        actionColumn * cellWidth + 8,
+        type.portrait * cellHeight + 14,
+        cellWidth - 16,
+        cellHeight - 28,
+        -size / 2,
+        -size,
+        size,
+        size
+      );
+      ctx.restore();
+      return;
+    }
+    const ctx = this.ctx;
+    const facing = options.facing || 1;
+    const step = options.walking ? options.step || 0 : 0;
+    const selected = Boolean(options.selected);
+    const colors = {
+      dog: { body: "#efbd73", patch: "#9f5b2f", light: "#fff0c9" },
+      cat: { body: "#efa43e", patch: "#b95c2c", light: "#fff0ca" },
+      rabbit: { body: "#f5f0e8", patch: "#e9a6b6", light: "#ffffff" },
+      chick: { body: "#f3cf4f", patch: "#e98936", light: "#fff2a5" }
+    }[petId];
+    const scale = size / 72;
+    const bounce = options.walking ? Math.abs(step) * 2 : Math.sin(this.frameNow / 420 + x) * 1.4;
+    ctx.save();
+    ctx.translate(Math.round(x), Math.round(y - bounce));
+    if (selected) {
+      ctx.save();
+      ctx.globalAlpha = 0.55 + Math.sin(this.frameNow / 210) * 0.15;
+      ctx.beginPath();
+      ctx.ellipse(0, 3, 31 * scale, 12 * scale, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = C.yellow;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath();
+    ctx.ellipse(0, 4, 25 * scale, 8 * scale, 0, 0, Math.PI * 2);
+    ctx.fillStyle = C.ink;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.scale(facing * scale, scale);
+
+    const leg = Math.round(step * 4);
+    if (petId === "dog") {
+      this.line(24, -30, 32, -39 - Math.sin(this.frameNow / 170) * 5, colors.patch, 6);
+      this.rounded(-21, -30, 43, 29, 10, colors.body, C.ink, 2);
+      this.rounded(-15, -7 + leg, 9, 13, 3, colors.patch, C.ink, 1);
+      this.rounded(7, -7 - leg, 9, 13, 3, colors.patch, C.ink, 1);
+      this.circle(-1, -43, 23, colors.body, C.ink, 2);
+      this.rounded(-25, -55, 10, 28, 5, colors.patch, C.ink, 2);
+      this.rounded(15, -55, 10, 28, 5, colors.patch, C.ink, 2);
+      this.rounded(-12, -42, 24, 16, 7, colors.light);
+      this.circle(-8, -47, 3, C.ink);
+      this.circle(8, -47, 3, C.ink);
+      this.rect(-3, -42, 6, 5, C.ink);
+      ctx.beginPath();
+      ctx.moveTo(-16, -28);
+      ctx.lineTo(16, -28);
+      ctx.lineTo(0, -13);
+      ctx.closePath();
+      ctx.fillStyle = C.greenDark;
+      ctx.fill();
+      ctx.strokeStyle = C.ink;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else if (petId === "cat") {
+      this.ctx.beginPath();
+      this.ctx.arc(20, -27, 18, -1.2, 1.4);
+      this.ctx.strokeStyle = colors.patch;
+      this.ctx.lineWidth = 7;
+      this.ctx.stroke();
+      this.rounded(-20, -31, 40, 30, 13, colors.body, C.ink, 2);
+      this.rounded(-14, -7 + leg, 8, 13, 3, colors.patch, C.ink, 1);
+      this.rounded(7, -7 - leg, 8, 13, 3, colors.patch, C.ink, 1);
+      ctx.beginPath();
+      ctx.moveTo(-20, -58);
+      ctx.lineTo(-12, -72);
+      ctx.lineTo(-4, -57);
+      ctx.moveTo(4, -57);
+      ctx.lineTo(12, -72);
+      ctx.lineTo(21, -57);
+      ctx.fillStyle = colors.body;
+      ctx.fill();
+      ctx.strokeStyle = C.ink;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      this.circle(0, -45, 23, colors.body, C.ink, 2);
+      this.rounded(-12, -42, 24, 15, 7, colors.light);
+      this.circle(-8, -48, 3, C.ink);
+      this.circle(8, -48, 3, C.ink);
+      this.rect(-2, -42, 4, 4, C.coral);
+      this.line(-17, -38, -29, -41, C.inkSoft, 1);
+      this.line(17, -38, 29, -41, C.inkSoft, 1);
+    } else if (petId === "rabbit") {
+      this.rounded(-19, -32, 38, 31, 13, colors.body, C.ink, 2);
+      this.rounded(-16, -8 + leg, 11, 14, 4, colors.light, C.ink, 1);
+      this.rounded(5, -8 - leg, 11, 14, 4, colors.light, C.ink, 1);
+      this.rounded(-17, -83, 13, 42, 7, colors.body, C.ink, 2);
+      this.rounded(4, -83, 13, 42, 7, colors.body, C.ink, 2);
+      this.rounded(-13, -77, 5, 29, 3, colors.patch);
+      this.rounded(8, -77, 5, 29, 3, colors.patch);
+      this.circle(0, -43, 22, colors.body, C.ink, 2);
+      this.circle(-8, -47, 3, C.ink);
+      this.circle(8, -47, 3, C.ink);
+      this.rect(-2, -41, 4, 4, C.coral);
+    } else {
+      this.rounded(-24, -43, 48, 42, 19, colors.body, C.ink, 2);
+      this.rounded(-30, -34, 13, 23, 8, colors.light, C.ink, 1);
+      this.rounded(17, -34, 13, 23, 8, colors.light, C.ink, 1);
+      this.line(-10, -2, -12 + leg, 6, colors.patch, 3);
+      this.line(10, -2, 12 - leg, 6, colors.patch, 3);
+      this.circle(-8, -34, 3, C.ink);
+      this.circle(8, -34, 3, C.ink);
+      this.rect(-5, -27, 10, 6, colors.patch, C.ink, 1);
+      this.rect(-3, -51, 6, 9, colors.patch, C.ink, 1);
+    }
+    ctx.restore();
+  }
+
+  drawShopIcon(id, x, y, scale = 1) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    if (id === "watering") {
+      this.rounded(-13, -8, 22, 18, 4, C.sky, C.ink, 2);
+      this.line(8, -3, 17, 3, C.blue, 5);
+      this.line(-6, -8, -6, -15, C.ink, 2);
+      this.drawWaterDrop(17, 10, 3);
+    } else if (id === "basket") {
+      this.rounded(-14, -5, 28, 19, 3, C.yellowSoft, C.ink, 2);
+      this.ctx.beginPath();
+      this.ctx.arc(0, -4, 10, Math.PI, 0);
+      this.ctx.strokeStyle = C.soilDark;
+      this.ctx.lineWidth = 3;
+      this.ctx.stroke();
+      this.line(-6, -3, -6, 12, C.soilDark, 1);
+      this.line(2, -3, 2, 12, C.soilDark, 1);
+    } else if (id === "greenhouse") {
+      this.ctx.beginPath();
+      this.ctx.moveTo(-15, 12);
+      this.ctx.lineTo(-12, -5);
+      this.ctx.lineTo(0, -15);
+      this.ctx.lineTo(12, -5);
+      this.ctx.lineTo(15, 12);
+      this.ctx.closePath();
+      this.ctx.fillStyle = "rgba(125,198,216,0.45)";
+      this.ctx.fill();
+      this.ctx.strokeStyle = C.ink;
+      this.ctx.lineWidth = 2;
+      this.ctx.stroke();
+      this.line(0, -14, 0, 12, C.blue, 1);
+    } else if (id === "market") {
+      this.rect(-14, -5, 28, 18, C.paper, C.ink, 2);
+      this.rect(-17, -13, 34, 9, C.coral, C.ink, 2);
+      this.rect(-7, 2, 8, 11, C.greenDark);
+    } else if (id === "sprinkler") {
+      this.rect(-7, -2, 14, 16, C.sky, C.ink, 2);
+      this.line(-14, -4, 14, -4, C.blue, 4);
+      for (let drop = -1; drop <= 1; drop += 1) this.drawWaterDrop(drop * 12, -13 - Math.abs(drop) * 2, 3);
+    } else if (id === "harvester") {
+      this.rounded(-15, -9, 30, 22, 4, C.yellow, C.ink, 2);
+      this.circle(-9, 14, 5, C.ink);
+      this.circle(9, 14, 5, C.ink);
+      this.rect(-8, -4, 16, 9, C.cream, C.ink, 1);
+    } else if (id === "soilKit" || id === "compostBin") {
+      this.rounded(-12, -14, 24, 28, 4, C.greenSoft, C.ink, 2);
+      this.text(id === "soilKit" ? "土" : "肥", 0, 1, 13, C.greenDark, "center", 900);
+    } else if (id === "windmill") {
+      this.line(0, -2, 0, 16, C.soilDark, 4);
+      for (let blade = 0; blade < 4; blade += 1) {
+        ctx.save();
+        ctx.rotate(this.frameNow / 900 + blade * Math.PI / 2);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(5, -16);
+        ctx.lineTo(-3, -17);
+        ctx.closePath();
+        ctx.fillStyle = [C.coral, C.sky, C.yellow, C.green][blade];
+        ctx.fill();
+        ctx.restore();
+      }
+      this.circle(0, 0, 4, C.paper, C.ink, 1);
+    } else if (id === "scarecrow") {
+      this.line(0, -8, 0, 16, C.soilDark, 4);
+      this.line(-14, -2, 14, -2, C.soilDark, 3);
+      this.circle(0, -12, 8, C.yellowSoft, C.ink, 2);
+      this.line(-9, -20, 9, -20, C.coralDark, 3);
+    } else if (id === "orderBell") {
+      ctx.beginPath();
+      ctx.arc(0, 2, 13, Math.PI, 0);
+      ctx.lineTo(15, 9);
+      ctx.lineTo(-15, 9);
+      ctx.closePath();
+      ctx.fillStyle = C.yellow;
+      ctx.fill();
+      ctx.strokeStyle = C.ink;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      this.circle(0, 12, 3, C.coralDark);
+    } else {
+      this.rounded(-14, -14, 28, 28, 4, C.sky, C.ink, 2);
+      this.rect(-9, -8, 18, 9, C.cream, C.blue, 1);
+      this.line(-7, 7, 7, 7, C.white, 3);
+    }
+    ctx.restore();
+  }
+
+  marketItemsForTab(tab = this.marketTab) {
+    const ids = {
+      growth: ["watering", "basket", "greenhouse", "market", "compostBin", "orderBell"],
+      automation: ["sprinkler", "harvester", "soilKit", "coldStorage"],
+      decor: ["windmill", "scarecrow"]
+    }[tab] || [];
+    return ids.map((id) => Core.SHOP_ITEMS.find((item) => item.id === id)).filter(Boolean);
+  }
+
   drawMarket() {
-    this.text("经营商店", 18, 151, 17, C.ink, "left", 900);
-    this.text("金币投入会永久改变农场效率", 118, 151, 10, C.greenDark, "left", 700);
-    Core.SHOP_ITEMS.forEach((item, index) => {
+    this.text("经营集市", 18, 148, 17, C.ink, "left", 900);
+    this.text("升级、自动化与装饰分区陈列", 118, 148, 10, C.greenDark, "left", 700);
+    [
+      ["growth", "效率升级"],
+      ["automation", "自动化"],
+      ["decor", "农场装饰"]
+    ].forEach(([tab, label], index) => {
+      this.button(label, 18 + index * 103, 161, 95, 30, "market-tab", { tab }, {
+        fill: this.marketTab === tab ? C.coral : C.paper,
+        color: this.marketTab === tab ? C.white : C.ink,
+        size: 11
+      });
+    });
+
+    this.marketItemsForTab().forEach((item, index) => {
       const col = index % 3;
       const row = Math.floor(index / 3);
       const x = 18 + col * 205;
-      const y = 169 + row * 145;
+      const y = 201 + row * 145;
       const level = Core.itemLevel(this.state, item);
       const maxed = level >= item.max;
       const cost = Core.itemCost(this.state, item);
       this.rounded(x, y, 194, 132, 7, index % 2 ? C.cream : C.paper, C.ink, 2);
-      this.text(item.name, x + 14, y + 20, 14, C.ink, "left", 900);
+      this.drawShopIcon(item.id, x + 164, y + 29, 0.86);
+      this.text(item.name, x + 13, y + 20, 13, C.ink, "left", 900);
       const status = item.kind === "consumable"
         ? `持有 ${level}`
         : item.kind === "automation"
           ? `已购 ${level}/${item.max} · 空闲 ${Core.unplacedAutomation(this.state, item.id)}`
           : `Lv.${level}/${item.max}`;
-      this.text(status, x + 14, y + 43, 10, C.greenDark, "left", 800);
-      this.text(item.description, x + 14, y + 67, 10, C.inkSoft, "left", 700);
+      this.text(status, x + 13, y + 45, 10, C.greenDark, "left", 800);
+      this.text(item.description, x + 13, y + 70, 9, C.inkSoft, "left", 700);
       if (item.kind === "automation" && level > 0) {
-        this.button("布置", x + 12, y + 91, 70, 28, "place-auto", { itemId: item.id }, { fill: C.mint, size: 10 });
-        this.button(maxed ? "已满" : `再买 ￥${cost}`, x + 88, y + 91, 94, 28, "buy-shop", { itemId: item.id }, {
+        this.button("布置", x + 12, y + 94, 70, 27, "place-auto", { itemId: item.id }, { fill: C.mint, size: 10 });
+        this.button(maxed ? "已满" : `再买 ￥${cost}`, x + 88, y + 94, 94, 27, "buy-shop", { itemId: item.id }, {
           disabled: maxed,
           fill: C.yellowSoft,
           size: 10
         });
       } else {
-        this.button(maxed ? "已拥有" : `购买 ￥${cost}`, x + 72, y + 91, 110, 28, "buy-shop", { itemId: item.id }, {
+        this.button(maxed ? "已拥有" : `购买 ￥${cost}`, x + 72, y + 94, 110, 27, "buy-shop", { itemId: item.id }, {
           disabled: maxed,
           fill: C.yellowSoft,
           size: 10
@@ -828,40 +1736,426 @@ class HarvestCollection {
       }
     });
 
-    this.text("资源与长期研究", 649, 151, 17, C.ink, "left", 900);
-    this.rounded(649, 169, 293, 84, 7, C.paper, C.ink, 2);
-    this.text("种子券兑换", 663, 189, 13, C.ink, "left", 900);
-    this.text("1 张券换当前等级随机种子", 663, 211, 10, C.inkSoft, "left", 700);
-    this.button("兑换", 843, 183, 84, 36, "exchange", {}, {
-      disabled: this.state.seedTickets < 1,
-      fill: C.coral,
-      color: C.white
-    });
+    this.rounded(636, 161, 306, 100, 7, C.paper, C.ink, 2);
+    this.drawPetPortrait("dog", 675, 211, 70);
+    this.text("暖阳宠物园", 715, 181, 14, C.ink, "left", 900);
+    this.text(this.state.petGarden.unlocked ? "已解锁 · 宠物会带来访客收益" : `购买地契 ￥${Core.PET_GARDEN_COST}`, 715, 206, 9, C.greenDark, "left", 700);
+    this.button(this.state.petGarden.unlocked ? "进入" : "解锁", 824, 218, 103, 30, this.state.petGarden.unlocked ? "nav" : "unlock-pets", {
+      view: "pets"
+    }, { fill: C.coral, color: C.white, size: 11 });
 
-    this.rounded(649, 264, 293, 85, 7, C.cream, C.ink, 2);
-    const landCost = Core.nextLandCost(this.state);
-    this.text("农田扩建", 663, 284, 13, C.ink, "left", 900);
-    this.text(`${this.state.unlockedPlots}/${Core.PLOT_COUNT} 块土地`, 663, 308, 10, C.greenDark, "left", 800);
-    this.button(landCost == null ? "已全部解锁" : `解锁 ￥${landCost}`, 805, 280, 122, 38, "unlock-land", {}, {
-      disabled: landCost == null,
+    this.rounded(636, 272, 306, 72, 7, C.cream, C.ink, 2);
+    this.text("种子券兑换", 650, 291, 12, C.ink, "left", 900);
+    this.text("1 张券换当前等级随机种子", 650, 316, 9, C.inkSoft, "left", 700);
+    this.button("兑换", 844, 289, 83, 34, "exchange", {}, {
+      disabled: this.state.seedTickets < 1,
       fill: C.greenSoft,
       size: 11
     });
 
-    this.text(`丰收研究 · 可用 ★${this.state.stars}`, 649, 374, 15, C.ink, "left", 900);
+    this.rounded(636, 355, 306, 72, 7, C.paper, C.ink, 2);
+    const landCost = Core.nextLandCost(this.state);
+    this.text("农田扩建", 650, 374, 12, C.ink, "left", 900);
+    this.text(`${this.state.unlockedPlots}/${Core.PLOT_COUNT} 块土地`, 650, 399, 9, C.greenDark, "left", 800);
+    this.button(landCost == null ? "已全部解锁" : `解锁 ￥${landCost}`, 805, 372, 122, 34, "unlock-land", {}, {
+      disabled: landCost == null,
+      fill: C.greenSoft,
+      size: 10
+    });
+
+    this.text(`丰收研究 · ★${this.state.stars}`, 636, 451, 14, C.ink, "left", 900);
     Core.RESEARCH.forEach((entry, index) => {
-      const y = 394 + index * 73;
+      const y = 467 + index * 53;
       const level = this.state.research[entry.id];
       const cost = Core.researchCost(this.state, entry.id);
-      this.rounded(649, y, 293, 63, 6, index % 2 ? C.cream : C.paper, C.ink, 2);
-      this.text(entry.name, 663, y + 18, 12, C.ink, "left", 900);
-      this.text(`${entry.description} · Lv.${level}/5`, 663, y + 41, 9, C.greenDark, "left", 700);
-      this.button(cost == null ? "完成" : `★${cost}`, 865, y + 14, 62, 34, "research", { researchId: entry.id }, {
+      this.rounded(636, y, 306, 46, 5, index % 2 ? C.cream : C.paper, C.ink, 1);
+      this.text(entry.name, 650, y + 14, 11, C.ink, "left", 900);
+      this.text(`${entry.description} · Lv.${level}`, 650, y + 33, 8, C.greenDark, "left", 700);
+      this.button(cost == null ? "完成" : `★${cost}`, 872, y + 8, 56, 30, "research", { researchId: entry.id }, {
         disabled: cost == null,
         fill: C.yellowSoft,
-        size: 11
+        size: 10
       });
     });
+  }
+
+  drawPetFacilityIcon(icon, x, y, scale = 1) {
+    const facilityIndex = {
+      food: 0,
+      kennel: 1,
+      pond: 2,
+      feeder: 3,
+      toy: 4,
+      groom: 5,
+      flower: 6,
+      lamp: 7,
+      picnic: 8,
+      birdbath: 9,
+      path: 10,
+      music: 11
+    }[icon];
+    if (this.petFacilityCanvas && facilityIndex != null) {
+      const ctx = this.ctx;
+      const cellWidth = this.petFacilityCanvas.width / 4;
+      const cellHeight = this.petFacilityCanvas.height / 3;
+      const size = 58 * scale;
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        this.petFacilityCanvas,
+        (facilityIndex % 4) * cellWidth,
+        Math.floor(facilityIndex / 4) * cellHeight,
+        cellWidth,
+        cellHeight,
+        x - size / 2,
+        y - size / 2,
+        size,
+        size
+      );
+      ctx.restore();
+      return;
+    }
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    if (icon === "food") {
+      this.rounded(-15, 2, 30, 13, 5, C.coral, C.ink, 2);
+      this.circle(-8, 1, 5, C.soil, C.ink, 1);
+      this.circle(0, -1, 5, C.soil, C.ink, 1);
+      this.circle(8, 1, 5, C.soil, C.ink, 1);
+    } else if (icon === "kennel") {
+      this.rect(-14, -5, 28, 20, C.yellowSoft, C.ink, 2);
+      ctx.beginPath();
+      ctx.moveTo(-18, -5);
+      ctx.lineTo(0, -20);
+      ctx.lineTo(18, -5);
+      ctx.closePath();
+      ctx.fillStyle = C.coral;
+      ctx.fill();
+      ctx.strokeStyle = C.ink;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      this.rounded(-6, 2, 12, 13, 5, C.soilDark);
+    } else if (icon === "pond") {
+      ctx.beginPath();
+      ctx.ellipse(0, 6, 19, 10, 0, 0, Math.PI * 2);
+      ctx.fillStyle = C.sky;
+      ctx.fill();
+      ctx.strokeStyle = C.ink;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      this.line(-12, 4, 10, 4, C.white, 2);
+      this.rect(-16, -8, 4, 12, C.greenDark);
+      this.line(-14, -7, -20, -14, C.green, 3);
+    } else if (icon === "feeder") {
+      this.rect(-8, -18, 16, 24, C.yellow, C.ink, 2);
+      this.rounded(-17, 4, 34, 12, 4, C.coral, C.ink, 2);
+      this.circle(0, -8, 4, C.green, C.ink, 1);
+    } else if (icon === "toy") {
+      this.rect(-17, 0, 34, 16, C.coral, C.ink, 2);
+      this.circle(-9, -7, 8, C.yellow, C.ink, 2);
+      this.line(-14, -7, -4, -7, C.blue, 2);
+      this.rect(3, -13, 10, 13, C.greenSoft, C.ink, 1);
+    } else if (icon === "groom") {
+      this.rect(-16, 3, 32, 13, C.paper, C.ink, 2);
+      this.rect(-3, -15, 6, 18, C.soilDark, C.ink, 1);
+      this.line(-12, -12, 12, -12, C.coral, 5);
+      for (let tooth = -10; tooth <= 10; tooth += 5) this.line(tooth, -10, tooth, -4, C.ink, 1);
+    } else if (icon === "flower") {
+      this.line(-14, 16, -14, -3, C.greenDark, 3);
+      this.line(14, 16, 14, -3, C.greenDark, 3);
+      ctx.beginPath();
+      ctx.arc(0, -3, 15, Math.PI, 0);
+      ctx.strokeStyle = C.greenDark;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      [-12, -5, 3, 11].forEach((dx, index) => this.circle(dx, -8 - Math.abs(dx) * 0.18, 4, index % 2 ? C.yellow : C.coral, C.ink, 1));
+    } else if (icon === "lamp") {
+      this.line(0, -12, 0, 16, C.soilDark, 4);
+      this.rounded(-9, -18, 18, 14, 4, C.yellowSoft, C.ink, 2);
+      this.circle(0, -11, 4, C.yellow);
+    } else if (icon === "birdbath") {
+      this.rect(-3, -1, 6, 18, C.paper, C.ink, 1);
+      this.rounded(-12, 14, 24, 5, 2, C.paper2, C.ink, 1);
+      this.ctx.beginPath();
+      this.ctx.ellipse(0, -4, 15, 6, 0, 0, Math.PI * 2);
+      this.ctx.fillStyle = C.sky;
+      this.ctx.fill();
+      this.ctx.strokeStyle = C.ink;
+      this.ctx.lineWidth = 2;
+      this.ctx.stroke();
+      this.rect(4, -17, 9, 7, C.yellow, C.ink, 1);
+      this.rect(11, -14, 5, 2, C.coral);
+      this.line(7, -10, 5, -6, C.soilDark, 1);
+      this.line(10, -10, 12, -6, C.soilDark, 1);
+    } else if (icon === "path") {
+      [
+        [-12, 5, C.coral],
+        [1, -4, C.sky],
+        [13, 7, C.yellow],
+        [-1, 12, C.greenSoft]
+      ].forEach(([dx, dy, color]) => {
+        this.ctx.beginPath();
+        this.ctx.ellipse(dx, dy, 8, 5, -0.18, 0, Math.PI * 2);
+        this.ctx.fillStyle = color;
+        this.ctx.fill();
+        this.ctx.strokeStyle = C.ink;
+        this.ctx.lineWidth = 1;
+        this.ctx.stroke();
+      });
+    } else if (icon === "music") {
+      this.rounded(-15, -5, 30, 20, 3, C.coral, C.ink, 2);
+      this.rect(-10, -13, 20, 9, C.yellowSoft, C.ink, 1);
+      this.circle(-5, 5, 4, C.yellow, C.ink, 1);
+      this.line(15, 2, 22, 2, C.soilDark, 2);
+      this.line(21, 2, 21, 9, C.soilDark, 2);
+      this.line(18, 9, 24, 9, C.soilDark, 2);
+    } else {
+      this.rect(-18, -5, 36, 21, C.paper, C.ink, 2);
+      this.rect(-18, -5, 18, 10, C.coral);
+      this.rect(0, 5, 18, 11, C.greenSoft);
+      this.line(-12, 16, -12, 21, C.soilDark, 3);
+      this.line(12, 16, 12, 21, C.soilDark, 3);
+    }
+    ctx.restore();
+  }
+
+  drawPetMeter(label, value, x, y, color) {
+    this.text(label, x, y, 10, C.ink, "left", 800);
+    this.rounded(x + 38, y - 6, 70, 12, 4, C.paper2, C.ink, 1);
+    this.rounded(x + 40, y - 4, 66 * clamp01(value / 100), 8, 3, color);
+    this.text(Math.round(value), x + 113, y, 9, C.inkSoft, "left", 800);
+  }
+
+  drawPetGardenScene() {
+    const garden = this.state.petGarden;
+    const selectedType = Core.petType(garden.selectedPet);
+    const selected = garden.pets[garden.selectedPet];
+    this.rounded(18, 169, 600, 455, 7, "#b7dfa4", C.ink, 2);
+    this.rect(20, 224, 596, 398, "#a8d994");
+    for (let x = 28; x < 610; x += 34) {
+      this.rect(x, 231 + (x % 3), 3, 9, "#79b46e");
+      this.line(x + 1, 232, x - 4, 227, "#79b46e", 2);
+    }
+    for (let x = 24; x < 615; x += 28) {
+      this.rect(x, 220, 20, 7, C.paper, C.ink, 1);
+      this.rect(x + 6, 209, 8, 18, C.paper, C.ink, 1);
+    }
+
+    Core.PET_TYPES.forEach((pet, index) => {
+      const entry = garden.pets[pet.id];
+      const x = 28 + index * 94;
+      const active = garden.selectedPet === pet.id;
+      const actionBusy = this.actionEffects.some((effect) => effect.type === "pet-action" && effect.until >= this.frameNow);
+      const hit = this.addHit("pet-select", x, 177, 86, 39, { petId: pet.id });
+      this.rounded(x, 177, 86, 39, 5, active ? C.yellowSoft : entry.owned ? C.cream : C.paper2, C.ink, active ? 3 : 1);
+      this.drawPetPortrait(pet.id, x + 20, 196, 34, { alpha: entry.owned ? 1 : 0.35 });
+      this.text(entry.owned ? pet.name : "未领养", x + 39, 197, 9, entry.owned ? C.ink : C.lock, "left", 800);
+      hit.disabled = !entry.owned || actionBusy;
+    });
+    this.button(`领取 ￥${garden.visitorCoins}`, 480, 179, 126, 34, "pet-claim", {}, {
+      disabled: garden.visitorCoins < 1,
+      fill: C.yellowSoft,
+      size: 10
+    });
+
+    if (selected?.owned) {
+      this.drawPetMeter("饱食", selected.hunger, 31, 244, C.yellow);
+      this.drawPetMeter("开心", selected.happiness, 174, 244, C.coral);
+      this.drawPetMeter("洁净", selected.cleanliness, 317, 244, C.sky);
+      this.text(`心情 ${Core.petMood(selected)} · 粮食 ${garden.food}`, 590, 244, 9, C.greenDark, "right", 900);
+    }
+
+    const facilities = garden.facilities;
+    this.drawPetFacilityIcon("food", 205, 486, 0.88);
+    this.text(`宠物粮 ${garden.food}`, 205, 514, 8, C.greenDark, "center", 800);
+    if (facilities.flowerArch) this.drawPetFacilityIcon("flower", 260, 293, 1.35);
+    if (facilities.kennel) this.drawPetFacilityIcon("kennel", 76, 446, 1.65);
+    if (facilities.pond) {
+      this.drawPetFacilityIcon("pond", 530, 466, 1.7);
+      const ripple = (Math.sin(this.frameNow / 340) + 1) / 2;
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.35 * (1 - ripple);
+      this.ctx.beginPath();
+      this.ctx.ellipse(530, 475, 22 + ripple * 20, 7 + ripple * 6, 0, 0, Math.PI * 2);
+      this.ctx.strokeStyle = C.white;
+      this.ctx.stroke();
+      this.ctx.restore();
+    }
+    if (facilities.autoFeeder) {
+      this.drawPetFacilityIcon("feeder", 485, 310, 1.25);
+      const drop = (this.frameNow / 900) % 1;
+      this.circle(485, 319 + drop * 22, 3, C.soil, C.ink, 1);
+    }
+    if (facilities.toyBox) {
+      this.drawPetFacilityIcon("toy", 165, 492, 1.2);
+      this.circle(145 + Math.sin(this.frameNow / 500) * 8, 460 - Math.abs(Math.sin(this.frameNow / 360)) * 13, 7, C.yellow, C.ink, 1);
+    }
+    if (facilities.grooming) this.drawPetFacilityIcon("groom", 562, 328, 1.15);
+    if (facilities.nightLamp) {
+      this.drawPetFacilityIcon("lamp", 585, 424, 1.2);
+      this.circle(585, 411, 20 + Math.sin(this.frameNow / 400) * 3, "rgba(243,201,85,0.13)");
+    }
+    if (facilities.picnic) this.drawPetFacilityIcon("picnic", 145, 355, 1.3);
+    if (facilities.birdBath) {
+      this.drawPetFacilityIcon("birdbath", 55, 323, 1.25);
+      const splash = (this.frameNow / 720) % 1;
+      this.drawWaterDrop(55 + Math.sin(this.frameNow / 180) * 5, 308 - splash * 13, 3, 0.75 * (1 - splash));
+    }
+    if (facilities.pebblePath) {
+      const stones = Math.min(15, 5 + facilities.pebblePath * 4);
+      for (let index = 0; index < stones; index += 1) {
+        const ratio = index / Math.max(1, stones - 1);
+        const x = 215 + ratio * 255;
+        const y = 535 + Math.sin(index * 1.7) * 8;
+        const colors = [C.coral, C.sky, C.yellow, C.greenSoft];
+        this.ctx.beginPath();
+        this.ctx.ellipse(x, y, 10, 6, index % 2 ? 0.22 : -0.22, 0, Math.PI * 2);
+        this.ctx.fillStyle = colors[index % colors.length];
+        this.ctx.fill();
+        this.ctx.strokeStyle = C.ink;
+        this.ctx.lineWidth = 1;
+        this.ctx.stroke();
+      }
+    }
+    if (facilities.musicBox) {
+      this.drawPetFacilityIcon("music", 505, 535, 1.08);
+      for (let note = 0; note < 3; note += 1) {
+        const phase = ((this.frameNow / 980) + note / 3) % 1;
+        this.ctx.save();
+        this.ctx.globalAlpha = 1 - phase;
+        this.text(note % 2 ? "♪" : "♫", 520 + note * 13, 521 - phase * 30, 13, note % 2 ? C.coral : C.blue, "center", 900);
+        this.ctx.restore();
+      }
+    }
+    if (this.state.upgrades.windmill) {
+      this.drawShopIcon("windmill", 37, 530, 0.72);
+      this.text(`Lv.${this.state.upgrades.windmill}`, 37, 560, 8, C.greenDark, "center", 800);
+    }
+    if (this.state.upgrades.scarecrow) this.drawShopIcon("scarecrow", 574, 540, 0.78);
+
+    const actors = Core.PET_TYPES
+      .filter((type) => garden.pets[type.id].owned)
+      .map((type) => ({ type, position: this.petActorPosition(type.id) }))
+      .sort((a, b) => a.position.y - b.position.y);
+    if (actors.length) {
+      actors.forEach(({ type, position }) => {
+        const isSelected = garden.selectedPet === type.id;
+        const size = { dog: 86, cat: 78, rabbit: 84, chick: 64 }[type.id];
+        this.drawPixelPetActor(type.id, position.x, position.y, size, {
+          selected: isSelected,
+          walking: position.walking,
+          action: position.action,
+          facing: position.facing,
+          step: position.step
+        });
+        if (isSelected) {
+          this.rounded(position.x - 31, position.y + 10, 62, 18, 5, C.paper, C.ink, 1);
+          this.text(type.name, position.x, position.y + 19, 9, C.ink, "center", 900);
+        }
+      });
+    } else {
+      this.rounded(235, 325, 210, 84, 6, C.paper, C.ink, 2);
+      this.text("先从右侧领养小麦犬", 340, 355, 13, C.ink, "center", 900);
+      this.text("领养后会在园里自由活动", 340, 383, 9, C.greenDark, "center", 700);
+    }
+
+    const petOwned = Boolean(selected?.owned);
+    const activePetAction = [...this.actionEffects].reverse().find((effect) => (
+      effect.type === "pet-action"
+      && effect.petId === garden.selectedPet
+      && effect.until >= this.frameNow
+    ));
+    if (activePetAction) {
+      const actionLabel = { feed: "吃饭", pet: "撒娇", play: "玩球", bathe: "洗澡", groom: "梳毛" }[activePetAction.action] || "活动";
+      this.text(`${selectedType.name}正在${actionLabel}…`, 340, 551, 9, C.greenDark, "center", 900);
+    }
+    [
+      ["feed", "喂食", true],
+      ["pet", "抚摸", true],
+      ["play", "玩耍", true],
+      ["bathe", facilities.pond ? "洗澡" : "洗澡·需水池", Boolean(facilities.pond)],
+      ["groom", facilities.grooming ? "梳毛" : "梳毛·需护理", Boolean(facilities.grooming)]
+    ].forEach(([action, label, available], index) => {
+      this.button(label, 28 + index * 116, 570, 106, 34, "pet-action", { action }, {
+        disabled: !petOwned || !available || Boolean(activePetAction),
+        fill: available ? C.cream : C.paper2,
+        size: available ? 11 : 8
+      });
+    });
+  }
+
+  drawPetShop() {
+    const garden = this.state.petGarden;
+    this.rounded(636, 169, 306, 455, 7, C.paper, C.ink, 2);
+    this.text("宠物园商店", 650, 189, 15, C.ink, "left", 900);
+    [
+      ["pets", "领养"],
+      ["facilities", "设施"],
+      ["decor", "装饰"]
+    ].forEach(([tab, label], index) => {
+      this.button(label, 650 + index * 92, 204, 84, 29, "pet-tab", { tab }, {
+        fill: this.petShopTab === tab ? C.coral : C.cream,
+        color: this.petShopTab === tab ? C.white : C.ink,
+        size: 10
+      });
+    });
+
+    if (this.petShopTab === "pets") {
+      Core.PET_TYPES.forEach((pet, index) => {
+        const y = 242 + index * 86;
+        const entry = garden.pets[pet.id];
+        const locked = this.state.level < pet.level;
+        this.rounded(648, y, 282, 76, 5, index % 2 ? C.cream : C.paper2, C.ink, 1);
+        this.drawPetPortrait(pet.id, 681, y + 38, 62, { alpha: locked ? 0.4 : 1 });
+        this.text(pet.name, 718, y + 17, 12, locked ? C.lock : C.ink, "left", 900);
+        this.text(locked ? `农场 Lv.${pet.level} 解锁` : pet.description, 718, y + 38, 8, locked ? C.lock : C.greenDark, "left", 700);
+        this.button(entry.owned ? "已领养" : `￥${pet.cost}`, 838, y + 46, 80, 24, "pet-buy", { petId: pet.id }, {
+          disabled: entry.owned || locked,
+          fill: C.yellowSoft,
+          size: 9
+        });
+      });
+    } else {
+      const items = this.petShopTab === "decor"
+        ? Core.PET_FACILITIES.filter((item) => item.kind === "decoration")
+        : Core.PET_FACILITIES.filter((item) => item.kind !== "decoration");
+      const rowHeight = items.length > 4 ? 58 : 84;
+      items.forEach((item, index) => {
+        const y = 242 + index * rowHeight;
+        const level = item.kind === "consumable" ? garden.food : garden.facilities[item.id];
+        const maxed = item.kind !== "consumable" && level >= item.max;
+        const cost = Core.petFacilityCost(this.state, item.id);
+        this.rounded(648, y, 282, rowHeight - 7, 5, index % 2 ? C.cream : C.paper2, C.ink, 1);
+        this.drawPetFacilityIcon(item.icon, 674, y + (rowHeight - 7) / 2, rowHeight > 70 ? 0.9 : 0.72);
+        this.text(item.name, 703, y + 15, 10, C.ink, "left", 900);
+        this.text(
+          item.kind === "consumable"
+            ? `农场蔬菜 ${Core.availableProduce(this.state)} 份 · 粮 ${garden.food}`
+            : `${item.description} · ${level}/${item.max}`,
+          703,
+          y + 34,
+          8,
+          C.greenDark,
+          "left",
+          700
+        );
+        this.button(maxed ? "已满" : `￥${cost}`, 848, y + rowHeight - 32, 70, 23, "pet-facility-buy", { itemId: item.id }, {
+          disabled: maxed,
+          fill: C.yellowSoft,
+          size: 9
+        });
+      });
+    }
+  }
+
+  drawPetGarden() {
+    Core.syncPetGarden(this.state, this.frameNow);
+    this.text("暖阳宠物园", 18, 148, 17, C.ink, "left", 900);
+    this.text(`农场供给蔬菜 · 宠物回流金币和堆肥 · 仓库 ${Core.availableProduce(this.state)} 份`, 126, 148, 10, C.greenDark, "left", 700);
+    this.drawPetGardenScene();
+    this.drawPetShop();
   }
 
   startLinkRound() {
@@ -2034,18 +3328,122 @@ class HarvestCollection {
   handlePointer(x, y, rightButton = false) {
     const hit = [...this.hits].reverse().find((entry) => x >= entry.x && x <= entry.x + entry.w && y >= entry.y && y <= entry.y + entry.h);
     if (hit && !hit.disabled) {
+      if (!["plot", "link-cell", "match-cell", "nav"].includes(hit.type)) {
+        this.addActionEffect("button-ripple", {
+          x: hit.x,
+          y: hit.y,
+          w: hit.w,
+          h: hit.h,
+          view: this.state.view
+        }, 300);
+      }
       if (hit.type === "nav") this.switchView(hit.view);
       else if (hit.type === "pin") this.togglePin();
       else if (hit.type === "plot") this.usePlot(hit.index);
+      else if (hit.type === "market-tab") this.marketTab = hit.tab;
+      else if (hit.type === "auto-toggle") {
+        const type = hit.itemId;
+        const enabled = !this.state.automationEnabled[type];
+        this.state.automationEnabled[type] = enabled;
+        if (!enabled) this.robotJobs = this.robotJobs.filter((job) => job.type !== type);
+        else {
+          this.lastRobotScan = 0;
+          this.scanAutomation(true);
+        }
+        this.addActionEffect("ui-success", {
+          x: hit.x + hit.w / 2,
+          y: hit.y + hit.h / 2,
+          color: enabled ? C.green : C.lock,
+          view: "farm"
+        }, 620);
+        this.showToast(`${type === "sprinkler" ? "自动浇水" : "自动收菜"}已${enabled ? "开启" : "暂停"}，格子布置已保留`, enabled ? "good" : "normal");
+      }
+      else if (hit.type === "unlock-pets") {
+        const coinsBefore = this.state.coins;
+        const result = Core.unlockPetGarden(this.state, this.now());
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x: 875, y: 211, color: C.coral, view: "market" }, 900);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
+        this.showToast(result.ok ? "暖阳宠物园已解锁，欢迎领养第一只宠物" : result.reason, result.ok ? "good" : "bad", 2400);
+      } else if (hit.type === "pet-tab") {
+        this.petShopTab = hit.tab;
+      } else if (hit.type === "pet-select") {
+        if (this.state.petGarden.pets[hit.petId]?.owned) {
+          this.state.petGarden.selectedPet = hit.petId;
+          this.addActionEffect("ui-success", { x, y, color: C.yellow, view: "pets" }, 480);
+        }
+      } else if (hit.type === "pet-buy") {
+        const coinsBefore = this.state.coins;
+        const result = Core.buyPet(this.state, hit.petId, this.now());
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x, y, color: C.coral, view: "pets" }, 900);
+          this.addActionEffect("pet-action", { action: "pet", petId: hit.petId, view: "pets" }, 420);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
+        this.showToast(result.ok ? `${result.pet.name}来到宠物园了` : result.reason, result.ok ? "good" : "bad");
+      } else if (hit.type === "pet-facility-buy") {
+        const coinsBefore = this.state.coins;
+        const result = Core.buyPetFacility(this.state, hit.itemId, this.now());
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x, y, color: result.item.kind === "decoration" ? C.coral : C.yellow, view: "pets" }, 820);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
+        this.showToast(
+          result.ok
+            ? result.item.kind === "consumable"
+              ? `${result.item.name}加工完成，消耗农场蔬菜 ${Core.PET_FOOD_PRODUCE_COST} 份`
+              : `${result.item.name}购买完成`
+            : result.reason,
+          result.ok ? "good" : "bad"
+        );
+      } else if (hit.type === "pet-action") {
+        const result = Core.interactPet(this.state, hit.action, this.now());
+        if (result.ok) this.addActionEffect("pet-action", { action: hit.action, petId: result.pet.id, view: "pets" }, 1800);
+        const actionName = { feed: "喂食", pet: "抚摸", play: "玩耍", bathe: "洗澡", groom: "梳毛" }[hit.action];
+        this.showToast(result.ok ? `${result.pet.name}开始${actionName}，心情 ${result.mood}` : result.reason, result.ok ? "good" : "bad");
+      } else if (hit.type === "pet-claim") {
+        const coinsBefore = this.state.coins;
+        const result = Core.claimPetIncome(this.state, this.now());
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x, y, color: C.yellow, view: "pets" }, 780);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
+        this.showToast(
+          result.ok
+            ? `领取 ￥${result.amount}${result.compost ? `，回收堆肥 +${result.compost}` : ""}`
+            : result.reason,
+          result.ok ? "good" : "normal"
+        );
+      }
       else if (hit.type === "deliver") {
+        const orderIndex = this.state.orders.findIndex((order) => order.id === hit.orderId);
+        const coinsBefore = this.state.coins;
+        const sealsBefore = this.state.orderSeals;
         const result = Core.deliverOrder(this.state, hit.orderId);
+        if (result.ok) {
+          this.addActionEffect("order-deliver", { orderIndex: Math.max(0, orderIndex), view: "farm" }, 950);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+          this.addResourceEffect("orderSeals", this.state.orderSeals - sealsBefore);
+        }
         this.showToast(result.ok ? `订单完成，获得 ￥${result.coins}${result.sealUsed ? "（印章加成）" : ""}` : result.reason, result.ok ? "good" : "bad");
       } else if (hit.type === "seed-select") {
         const crop = Core.cropById(hit.cropId);
         if (crop.level <= this.state.level) this.state.selected = { type: "seed", id: crop.id };
         else this.showToast(`农场 ${crop.level} 级解锁`, "bad");
       } else if (hit.type === "seed-buy") {
+        const coinsBefore = this.state.coins;
         const result = Core.buySeeds(this.state, hit.cropId, 3);
+        if (result.ok) {
+          const cropIndex = Core.CROPS.findIndex((crop) => crop.id === hit.cropId);
+          this.addActionEffect("ui-success", {
+            x: 884,
+            y: 183 + cropIndex * 47,
+            color: C.green,
+            view: "farm"
+          }, 650);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
         this.showToast(result.ok ? `补充 ${Core.cropById(hit.cropId).name}种子 ×3` : result.reason, result.ok ? "good" : "bad");
       } else if (hit.type === "tool") {
         if (hit.tool === "seed") {
@@ -2053,10 +3451,20 @@ class HarvestCollection {
         }
         else this.state.selected = { type: hit.tool };
       } else if (hit.type === "sell") {
+        const coinsBefore = this.state.coins;
         const result = Core.sellAll(this.state);
+        if (result.ok) {
+          this.addActionEffect("warehouse-sell", { value: result.value, view: "farm" }, 1150);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
         this.showToast(result.ok ? `全部出售，收入 ￥${result.value}` : result.reason, result.ok ? "good" : "bad");
       } else if (hit.type === "buy-shop") {
+        const coinsBefore = this.state.coins;
         const result = Core.buyShopItem(this.state, hit.itemId);
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x, y, color: C.yellow, view: "market" }, 720);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
         this.showToast(result.ok ? `${result.item.name}购买成功` : result.reason, result.ok ? "good" : "bad");
       } else if (hit.type === "place-auto") {
         if (Core.unplacedAutomation(this.state, hit.itemId) > 0 || this.state.automationSlots[hit.itemId].length > 0) {
@@ -2064,13 +3472,30 @@ class HarvestCollection {
           this.switchView("farm");
         } else this.showToast("请先购买一台设备", "bad");
       } else if (hit.type === "exchange") {
+        const ticketsBefore = this.state.seedTickets;
         const result = Core.exchangeSeedTicket(this.state);
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x: 884, y: 201, color: C.coral, view: "market" }, 720);
+          this.addResourceEffect("seedTickets", this.state.seedTickets - ticketsBefore);
+        }
         this.showToast(result.ok ? `兑换到 ${result.crop.name}种子 ×${result.amount}` : result.reason, result.ok ? "good" : "bad");
       } else if (hit.type === "unlock-land") {
+        const plotIndex = this.state.unlockedPlots;
+        const coinsBefore = this.state.coins;
         const result = Core.unlockNextPlot(this.state);
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x: 866, y: 302, color: C.green, view: "market" }, 760);
+          this.addActionEffect("plot-unlock", { plotIndex, view: "farm" }, 950);
+          this.addResourceEffect("coins", this.state.coins - coinsBefore);
+        }
         this.showToast(result.ok ? "新土地已解锁" : result.reason, result.ok ? "good" : "bad");
       } else if (hit.type === "research") {
+        const starsBefore = this.state.stars;
         const result = Core.buyResearch(this.state, hit.researchId);
+        if (result.ok) {
+          this.addActionEffect("ui-success", { x, y, color: C.yellow, view: "market" }, 760);
+          this.addResourceEffect("stars", this.state.stars - starsBefore);
+        }
         this.showToast(result.ok ? `${result.entry.name}升级完成` : result.reason, result.ok ? "good" : "bad");
       } else if (hit.type === "link-cell") this.clickLinkCell(hit.row, hit.col);
       else if (hit.type === "link-hint") this.hintLink();
@@ -2099,7 +3524,8 @@ class HarvestCollection {
         id: plot.crop.cropId,
         progress: Number(Core.cropProgress(plot, this.now()).toFixed(2)),
         watered: plot.crop.watered,
-        fertilized: plot.crop.fertilized
+        fertilized: plot.crop.fertilized,
+        rotationBonus: plot.crop.rotationBonus
       } : null
     }));
     const payload = {
@@ -2117,13 +3543,15 @@ class HarvestCollection {
         level: this.state.level,
         xp: `${this.state.xp}/${Core.xpNeeded(this.state.level)}`,
         unlockedPlots: this.state.unlockedPlots,
+        automationEnabled: this.state.automationEnabled,
         plots: visiblePlots,
         seeds: Object.fromEntries(Core.CROPS.map((crop) => [crop.id, this.state.seeds[crop.id]])),
         produce: Object.fromEntries(Core.CROPS.map((crop) => [crop.id, this.state.produce[crop.id]])),
         orders: this.state.orders.map((order) => ({ ...order, stocked: this.state.produce[order.cropId] }))
       },
       festival: this.state.festival,
-      selected: this.state.selected
+      selected: this.state.selected,
+      activeEffects: this.actionEffects.map((effect) => effect.type)
     };
     if (this.state.view === "link" && this.link) {
       payload.link = {
@@ -2152,6 +3580,26 @@ class HarvestCollection {
         objective: `${this.match3.collected}/${this.match3.target}`,
         selected: this.match3.selected,
         animation: this.activeMatchSegment()?.type || null
+      };
+    }
+    if (this.state.view === "pets") {
+      const garden = this.state.petGarden;
+      payload.pets = {
+        selectedPet: garden.selectedPet,
+        food: garden.food,
+        farmProduceAvailable: Core.availableProduce(this.state),
+        visitorCoins: garden.visitorCoins,
+        facilities: garden.facilities,
+        owned: Object.fromEntries(Core.PET_TYPES.map((pet) => [pet.id, garden.pets[pet.id].owned])),
+        status: garden.pets[garden.selectedPet],
+        action: [...this.actionEffects].reverse().find((effect) => (
+          effect.type === "pet-action"
+          && effect.petId === garden.selectedPet
+          && effect.until >= this.frameNow
+        ))?.action || null,
+        actors: Core.PET_TYPES
+          .filter((pet) => garden.pets[pet.id].owned)
+          .map((pet) => ({ id: pet.id, ...this.petActorPosition(pet.id) }))
       };
     }
     return JSON.stringify(payload);
@@ -2185,6 +3633,8 @@ class MainScene extends Phaser.Scene {
         appInstance.link = null;
         appInstance.zuma = null;
         appInstance.match3 = null;
+        appInstance.actionEffects = [];
+        appInstance.maturePlots = new Set();
         appInstance.switchView("farm");
         appInstance.save(true);
       },

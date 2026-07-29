@@ -5,17 +5,18 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createCore() {
   "use strict";
 
-  const VERSION = 1;
+  const VERSION = 2;
   const PLOT_COUNT = 12;
   const FERTILIZER_COIN_COST = 4;
+  const PET_FOOD_PRODUCE_COST = 2;
 
   const CROPS = [
-    { id: "radish", name: "萝卜", level: 1, duration: 45_000, seedPrice: 5, sellPrice: 9, yield: 1, color: "#f4c8c4" },
-    { id: "cabbage", name: "白菜", level: 1, duration: 90_000, seedPrice: 8, sellPrice: 15, yield: 1, color: "#78c978" },
-    { id: "potato", name: "土豆", level: 2, duration: 180_000, seedPrice: 13, sellPrice: 10, yield: 2, color: "#d5a96e" },
-    { id: "tomato", name: "番茄", level: 3, duration: 300_000, seedPrice: 22, sellPrice: 14, yield: 2, color: "#ef6b62" },
-    { id: "corn", name: "玉米", level: 4, duration: 600_000, seedPrice: 38, sellPrice: 23, yield: 2, color: "#efcf55" },
-    { id: "strawberry", name: "草莓", level: 5, duration: 900_000, seedPrice: 65, sellPrice: 26, yield: 3, color: "#df4560" }
+    { id: "radish", name: "萝卜", level: 1, duration: 240_000, seedPrice: 5, sellPrice: 9, yield: 1, color: "#f4c8c4" },
+    { id: "cabbage", name: "白菜", level: 1, duration: 480_000, seedPrice: 8, sellPrice: 15, yield: 1, color: "#78c978" },
+    { id: "potato", name: "土豆", level: 2, duration: 900_000, seedPrice: 13, sellPrice: 10, yield: 2, color: "#d5a96e" },
+    { id: "tomato", name: "番茄", level: 3, duration: 1_500_000, seedPrice: 22, sellPrice: 14, yield: 2, color: "#ef6b62" },
+    { id: "corn", name: "玉米", level: 4, duration: 2_400_000, seedPrice: 38, sellPrice: 23, yield: 2, color: "#efcf55" },
+    { id: "strawberry", name: "草莓", level: 5, duration: 3_600_000, seedPrice: 65, sellPrice: 26, yield: 3, color: "#df4560" }
   ];
 
   const LAND_COSTS = [100, 160, 250, 380, 560, 800];
@@ -42,7 +43,33 @@
     },
     { id: "soilKit", name: "沃土改良包", description: "指定土地永久提质", max: 99, costs: [120], kind: "consumable" },
     { id: "windmill", name: "彩色风车", description: "成长速度额外提高 3%", max: 1, costs: [760], kind: "landmark" },
-    { id: "scarecrow", name: "稻草人", description: "高品质收获概率提高", max: 1, costs: [420], kind: "landmark" }
+    { id: "scarecrow", name: "稻草人", description: "高品质收获概率提高", max: 1, costs: [420], kind: "landmark" },
+    { id: "compostBin", name: "发酵肥箱", description: "每级让施肥再加速 4%", max: 3, costs: [360, 760, 1380], kind: "upgrade" },
+    { id: "orderBell", name: "熟客铜铃", description: "每级让订单奖励提高 5%", max: 3, costs: [480, 980, 1760], kind: "upgrade" },
+    { id: "coldStorage", name: "保鲜冷柜", description: "每级让出售价格提高 5%", max: 3, costs: [520, 1080, 1950], kind: "upgrade" }
+  ];
+
+  const PET_GARDEN_COST = 520;
+  const PET_TYPES = [
+    { id: "dog", name: "小麦犬", description: "热情，会吸引附近上班族", cost: 360, income: 0.35, level: 1, portrait: 0 },
+    { id: "cat", name: "橘子猫", description: "安静，心情下降得更慢", cost: 680, income: 0.5, level: 2, portrait: 1 },
+    { id: "rabbit", name: "云朵兔", description: "爱玩，玩耍收益更高", cost: 960, income: 0.7, level: 3, portrait: 2 },
+    { id: "chick", name: "团子鸡", description: "活泼，带来更多访客", cost: 1320, income: 0.95, level: 4, portrait: 3 }
+  ];
+
+  const PET_FACILITIES = [
+    { id: "food", name: "田园宠物粮", description: "用 2 份农场蔬菜加工 5 份", kind: "consumable", max: 99, costs: [15], icon: "food" },
+    { id: "kennel", name: "舒适小屋", description: "减慢饥饿并提高收益", kind: "facility", max: 3, costs: [280, 620, 1120], icon: "kennel" },
+    { id: "pond", name: "浅水嬉戏池", description: "解锁洗澡并提高洁净", kind: "facility", max: 1, costs: [480], icon: "pond" },
+    { id: "autoFeeder", name: "自动喂食机", description: "离线时自动消耗口粮", kind: "facility", max: 3, costs: [760, 1380, 2280], icon: "feeder" },
+    { id: "toyBox", name: "玩具收纳箱", description: "每级提高玩耍效果", kind: "facility", max: 3, costs: [360, 780, 1420], icon: "toy" },
+    { id: "grooming", name: "宠物护理台", description: "解锁梳毛并提高收益", kind: "facility", max: 1, costs: [690], icon: "groom" },
+    { id: "flowerArch", name: "迎客花架", description: "每级提高访客收益 6%", kind: "decoration", max: 3, costs: [240, 540, 980], icon: "flower" },
+    { id: "nightLamp", name: "萤火夜灯", description: "夜间也能持续吸引访客", kind: "decoration", max: 1, costs: [430], icon: "lamp" },
+    { id: "picnic", name: "野餐小桌", description: "抚摸和玩耍效果提高", kind: "decoration", max: 1, costs: [590], icon: "picnic" },
+    { id: "birdBath", name: "小鸟饮水台", description: "洁净下降更慢并吸引访客", kind: "decoration", max: 1, costs: [380], icon: "birdbath" },
+    { id: "pebblePath", name: "彩石小径", description: "每级提高访客收益 3%", kind: "decoration", max: 3, costs: [180, 390, 720], icon: "path" },
+    { id: "musicBox", name: "手摇音乐盒", description: "宠物开心下降更慢", kind: "decoration", max: 1, costs: [820], icon: "music" }
   ];
 
   const RESEARCH = [
@@ -95,7 +122,25 @@
   }
 
   function blankPlot() {
-    return { crop: null, soil: 0 };
+    return { crop: null, soil: 0, lastCropId: null };
+  }
+
+  function createPetGarden(now = Date.now()) {
+    return {
+      unlocked: false,
+      selectedPet: "dog",
+      food: 2,
+      visitorCoins: 0,
+      incomeRemainder: 0,
+      lastUpdate: now,
+      pets: Object.fromEntries(PET_TYPES.map((pet) => [pet.id, {
+        owned: false,
+        hunger: 78,
+        happiness: 74,
+        cleanliness: 82
+      }])),
+      facilities: Object.fromEntries(PET_FACILITIES.filter((item) => item.kind !== "consumable").map((item) => [item.id, 0]))
+    };
   }
 
   function createDefaultState(now = Date.now()) {
@@ -116,6 +161,7 @@
       upgrades: Object.fromEntries(SHOP_ITEMS.filter((item) => item.kind !== "consumable").map((item) => [item.id, 0])),
       inventory: { soilKit: 0 },
       automationSlots: { sprinkler: [], harvester: [] },
+      automationEnabled: { sprinkler: true, harvester: true },
       seeds: Object.fromEntries(CROPS.map((crop) => [crop.id, 0])),
       produce: Object.fromEntries(CROPS.map((crop) => [crop.id, 0])),
       qualityStock: Object.fromEntries(CROPS.map((crop) => [crop.id, 0])),
@@ -127,6 +173,7 @@
       orderSerial: 3,
       exchangeSerial: 0,
       pestBlessing: 0,
+      petGarden: createPetGarden(now),
       lastAutoAt: now,
       stats: {
         planted: 0,
@@ -169,6 +216,33 @@
     state.produce = { ...fallback.produce, ...(raw.produce || {}) };
     state.qualityStock = { ...fallback.qualityStock, ...(raw.qualityStock || {}) };
     state.stats = { ...fallback.stats, ...(raw.stats || {}) };
+    const rawGarden = raw.petGarden || {};
+    state.petGarden = {
+      ...fallback.petGarden,
+      ...rawGarden,
+      unlocked: Boolean(rawGarden.unlocked),
+      selectedPet: PET_TYPES.some((pet) => pet.id === rawGarden.selectedPet) ? rawGarden.selectedPet : "dog",
+      food: Math.floor(clampNumber(rawGarden.food, fallback.petGarden.food)),
+      visitorCoins: Math.floor(clampNumber(rawGarden.visitorCoins, 0)),
+      incomeRemainder: clampNumber(rawGarden.incomeRemainder, 0),
+      lastUpdate: clampNumber(rawGarden.lastUpdate, now),
+      pets: Object.fromEntries(PET_TYPES.map((pet) => {
+        const entry = rawGarden.pets?.[pet.id] || fallback.petGarden.pets[pet.id];
+        return [pet.id, {
+          owned: Boolean(entry.owned),
+          hunger: Math.min(100, clampNumber(entry.hunger, 78)),
+          happiness: Math.min(100, clampNumber(entry.happiness, 74)),
+          cleanliness: Math.min(100, clampNumber(entry.cleanliness, 82))
+        }];
+      })),
+      facilities: {
+        ...fallback.petGarden.facilities,
+        ...(rawGarden.facilities || {})
+      }
+    };
+    for (const item of PET_FACILITIES.filter((entry) => entry.kind !== "consumable")) {
+      state.petGarden.facilities[item.id] = Math.min(item.max, Math.floor(clampNumber(state.petGarden.facilities[item.id], 0)));
+    }
     state.mastery = Object.fromEntries(CROPS.map((crop) => {
       const entry = raw.mastery?.[crop.id] || fallback.mastery[crop.id];
       return [crop.id, { xp: clampNumber(entry.xp, 0), level: Math.floor(clampNumber(entry.level, 0)) }];
@@ -176,6 +250,10 @@
     state.automationSlots = {
       sprinkler: [...new Set((raw.automationSlots?.sprinkler || []).map(Number))].filter((index) => index >= 0 && index < PLOT_COUNT),
       harvester: [...new Set((raw.automationSlots?.harvester || []).map(Number))].filter((index) => index >= 0 && index < PLOT_COUNT)
+    };
+    state.automationEnabled = {
+      sprinkler: raw.automationEnabled?.sprinkler !== false,
+      harvester: raw.automationEnabled?.harvester !== false
     };
     state.upgrades.sprinkler = Math.max(state.upgrades.sprinkler || 0, state.automationSlots.sprinkler.length);
     state.upgrades.harvester = Math.max(state.upgrades.harvester || 0, state.automationSlots.harvester.length);
@@ -188,10 +266,15 @@
             plantedAt: clampNumber(source.crop.plantedAt, now),
             finishAt: clampNumber(source.crop.finishAt, now),
             watered: Boolean(source.crop.watered),
-            fertilized: Boolean(source.crop.fertilized)
+            fertilized: Boolean(source.crop.fertilized),
+            rotationBonus: Boolean(source.crop.rotationBonus)
           }
         : null;
-      return { crop, soil: Math.min(3, Math.floor(clampNumber(source.soil, 0))) };
+      return {
+        crop,
+        soil: Math.min(3, Math.floor(clampNumber(source.soil, 0))),
+        lastCropId: cropById(source.lastCropId) ? source.lastCropId : null
+      };
     });
     const occupied = state.plots.reduce((highest, plot, index) => plot.crop ? index + 1 : highest, 0);
     const assigned = Math.max(0, ...state.automationSlots.sprinkler.map((index) => index + 1), ...state.automationSlots.harvester.map((index) => index + 1));
@@ -211,12 +294,14 @@
       : [];
     state.orderSerial = Math.max(3, Math.floor(clampNumber(raw.orderSerial, 3)));
     while (state.orders.length < 3) state.orders.push(createOrder(state.level, state.orderSerial++));
-    const allowedViews = ["farm", "link", "zuma", "match3", "market"];
+    const allowedViews = ["farm", "link", "zuma", "match3", "market", "pets"];
     state.view = allowedViews.includes(raw.view) ? raw.view : "farm";
+    if (state.view === "pets" && !state.petGarden.unlocked) state.view = "market";
     state.selected = raw.selected && ["seed", "water", "fertilizer", "hand", "automation", "soil"].includes(raw.selected.type)
       ? raw.selected
       : fallback.selected;
     state.lastAutoAt = clampNumber(raw.lastAutoAt, now);
+    syncPetGarden(state, now);
     state.lastSeen = now;
     return state;
   }
@@ -244,15 +329,17 @@
     if (plot.crop) return { ok: false, reason: "这块地已经种了东西" };
     if ((state.seeds[cropId] || 0) < 1) return { ok: false, reason: "种子不够，可购买或玩连连看" };
     state.seeds[cropId] -= 1;
-    const autoWatered = state.automationSlots.sprinkler.includes(plotIndex);
-    const duration = crop.duration * growthMultiplier(state);
+    const autoWatered = state.automationEnabled.sprinkler && state.automationSlots.sprinkler.includes(plotIndex);
+    const rotationBonus = Boolean(plot.lastCropId && plot.lastCropId !== cropId);
+    const duration = crop.duration * growthMultiplier(state) * (rotationBonus ? 0.9 : 1);
     const waterBoost = 0.15 + (state.upgrades.watering || 0) * 0.05;
     plot.crop = {
       cropId,
       plantedAt: now,
       finishAt: now + duration * (autoWatered ? 1 - waterBoost : 1),
       watered: autoWatered,
-      fertilized: false
+      fertilized: false,
+      rotationBonus
     };
     state.stats.planted += 1;
     addXp(state, 2);
@@ -280,7 +367,7 @@
     else state.coins -= FERTILIZER_COIN_COST;
     const crop = cropById(plot.crop.cropId);
     plot.crop.fertilized = true;
-    plot.crop.finishAt = Math.max(now, plot.crop.finishAt - crop.duration * 0.24);
+    plot.crop.finishAt = Math.max(now, plot.crop.finishAt - crop.duration * (0.24 + (state.upgrades.compostBin || 0) * 0.04));
     return { ok: true };
   }
 
@@ -306,6 +393,7 @@
     let quality = 1 + plot.soil * 0.07;
     if (plot.crop.watered) quality += 0.08;
     if (plot.crop.fertilized) quality += 0.18;
+    if (plot.crop.rotationBonus) quality += 0.08;
     if (state.upgrades.scarecrow) quality += 0.05;
     if (state.pestBlessing > 0) {
       quality += 0.12;
@@ -318,8 +406,10 @@
     state.stats.harvested += amount;
     addMastery(state, crop.id, amount);
     const levels = addXp(state, 4 + crop.level * 2);
+    const rotationBonus = Boolean(plot.crop.rotationBonus);
+    plot.lastCropId = crop.id;
     plot.crop = null;
-    return { ok: true, crop, amount, quality, levels };
+    return { ok: true, crop, amount, quality, levels, rotationBonus };
   }
 
   function buySeeds(state, cropId, amount = 3) {
@@ -345,7 +435,7 @@
   }
 
   function produceValue(state) {
-    const marketBonus = 1 + (state.upgrades.market || 0) * 0.06;
+    const marketBonus = 1 + (state.upgrades.market || 0) * 0.06 + (state.upgrades.coldStorage || 0) * 0.05;
     return CROPS.reduce((total, crop) => {
       const quality = state.qualityStock[crop.id] || 0;
       return total + crop.sellPrice * quality * marketBonus;
@@ -376,7 +466,11 @@
     state.qualityStock[order.cropId] = Math.max(0, state.qualityStock[order.cropId] - averageQuality * order.amount);
     const sealUsed = state.orderSeals > 0;
     if (sealUsed) state.orderSeals -= 1;
-    const multiplier = (1 + (state.research.orders || 0) * 0.06) * (sealUsed ? 1.25 : 1);
+    const multiplier = (
+      1
+      + (state.research.orders || 0) * 0.06
+      + (state.upgrades.orderBell || 0) * 0.05
+    ) * (sealUsed ? 1.25 : 1);
     const coins = Math.ceil(order.coins * multiplier);
     state.coins += coins;
     state.totalEarned += coins;
@@ -460,6 +554,7 @@
     state.lastAutoAt = now;
     let count = 0;
     let plots = 0;
+    if (!state.automationEnabled.harvester) return { ok: false, count, plots, reason: "自动收菜已暂停" };
     for (const index of state.automationSlots.harvester) {
       const result = harvest(state, index, now);
       if (result.ok) {
@@ -484,6 +579,191 @@
     state.stars -= cost;
     state.research[id] += 1;
     return { ok: true, entry, cost };
+  }
+
+  function petType(id) {
+    return PET_TYPES.find((pet) => pet.id === id);
+  }
+
+  function petFacility(id) {
+    return PET_FACILITIES.find((item) => item.id === id);
+  }
+
+  function petFacilityCost(state, id) {
+    const item = petFacility(id);
+    if (!item) return null;
+    if (item.kind === "consumable") return item.costs[0];
+    const level = state.petGarden.facilities[id] || 0;
+    return level >= item.max ? null : item.costs[level];
+  }
+
+  function petMood(entry) {
+    if (!entry?.owned) return 0;
+    return Math.round((entry.hunger + entry.happiness + entry.cleanliness) / 3);
+  }
+
+  function availableProduce(state) {
+    return CROPS.reduce((total, crop) => total + Math.floor(state.produce[crop.id] || 0), 0);
+  }
+
+  function consumeProduce(state, amount) {
+    let remaining = Math.max(0, Math.floor(amount));
+    const used = [];
+    const crops = [...CROPS].sort((a, b) => a.sellPrice - b.sellPrice);
+    for (const crop of crops) {
+      if (remaining <= 0) break;
+      const stock = Math.floor(state.produce[crop.id] || 0);
+      const take = Math.min(stock, remaining);
+      if (take <= 0) continue;
+      const averageQuality = stock ? (state.qualityStock[crop.id] || 0) / stock : 1;
+      state.produce[crop.id] -= take;
+      state.qualityStock[crop.id] = Math.max(0, (state.qualityStock[crop.id] || 0) - averageQuality * take);
+      used.push({ cropId: crop.id, amount: take });
+      remaining -= take;
+    }
+    return used;
+  }
+
+  function syncPetGarden(state, now = Date.now()) {
+    const garden = state.petGarden;
+    if (!garden?.unlocked) {
+      if (garden) garden.lastUpdate = now;
+      return { elapsedMinutes: 0, income: 0, autoFeeds: 0 };
+    }
+    const elapsedMs = Math.max(0, Math.min(8 * 60 * 60 * 1000, now - garden.lastUpdate));
+    if (elapsedMs < 1000) return { elapsedMinutes: elapsedMs / 60_000, income: 0, autoFeeds: 0 };
+    const minutes = elapsedMs / 60_000;
+    const kennel = garden.facilities.kennel || 0;
+    const toyBox = garden.facilities.toyBox || 0;
+    const pond = garden.facilities.pond || 0;
+    const autoFeeder = garden.facilities.autoFeeder || 0;
+    let autoFeeds = 0;
+    let baseIncome = 0;
+    for (const type of PET_TYPES) {
+      const pet = garden.pets[type.id];
+      if (!pet.owned) continue;
+      pet.hunger = Math.max(0, pet.hunger - minutes * Math.max(0.04, 0.12 - kennel * 0.02));
+      pet.happiness = Math.max(0, pet.happiness - minutes * Math.max(0.015, 0.045 - toyBox * 0.008));
+      const birdBath = garden.facilities.birdBath || 0;
+      const musicBox = garden.facilities.musicBox || 0;
+      pet.happiness = Math.min(100, pet.happiness + minutes * musicBox * 0.012);
+      pet.cleanliness = Math.max(0, pet.cleanliness - minutes * (pond || birdBath ? 0.018 : 0.035));
+      if (autoFeeder > 0 && garden.food > 0 && pet.hunger < 68) {
+        const desired = Math.min(autoFeeder, Math.ceil((72 - pet.hunger) / 28), garden.food);
+        pet.hunger = Math.min(100, pet.hunger + desired * 28);
+        garden.food -= desired;
+        autoFeeds += desired;
+      }
+      baseIncome += type.income * minutes * (petMood(pet) / 100) * (pet.hunger / 100);
+    }
+    const facilityBonus = 1
+      + kennel * 0.04
+      + (garden.facilities.grooming || 0) * 0.08
+      + (garden.facilities.flowerArch || 0) * 0.06
+      + (garden.facilities.nightLamp || 0) * 0.05
+      + (garden.facilities.picnic || 0) * 0.05
+      + (garden.facilities.birdBath || 0) * 0.04
+      + (garden.facilities.pebblePath || 0) * 0.03;
+    const earnedExact = baseIncome * facilityBonus + garden.incomeRemainder;
+    const income = Math.floor(earnedExact);
+    garden.incomeRemainder = earnedExact - income;
+    garden.visitorCoins += income;
+    garden.lastUpdate = now;
+    return { elapsedMinutes: minutes, income, autoFeeds };
+  }
+
+  function unlockPetGarden(state, now = Date.now()) {
+    if (state.petGarden.unlocked) return { ok: false, reason: "宠物园已经解锁" };
+    if (state.coins < PET_GARDEN_COST) return { ok: false, reason: "金币不够" };
+    state.coins -= PET_GARDEN_COST;
+    state.petGarden.unlocked = true;
+    state.petGarden.food += 3;
+    state.petGarden.lastUpdate = now;
+    return { ok: true, cost: PET_GARDEN_COST };
+  }
+
+  function buyPet(state, id, now = Date.now()) {
+    syncPetGarden(state, now);
+    if (!state.petGarden.unlocked) return { ok: false, reason: "请先解锁宠物园" };
+    const type = petType(id);
+    if (!type) return { ok: false, reason: "没有这种宠物" };
+    if (state.level < type.level) return { ok: false, reason: `农场 ${type.level} 级解锁` };
+    const entry = state.petGarden.pets[id];
+    if (entry.owned) return { ok: false, reason: "已经领养了" };
+    if (state.coins < type.cost) return { ok: false, reason: "金币不够" };
+    state.coins -= type.cost;
+    entry.owned = true;
+    entry.hunger = 82;
+    entry.happiness = 88;
+    entry.cleanliness = 86;
+    state.petGarden.selectedPet = id;
+    return { ok: true, pet: type, cost: type.cost };
+  }
+
+  function buyPetFacility(state, id, now = Date.now()) {
+    syncPetGarden(state, now);
+    if (!state.petGarden.unlocked) return { ok: false, reason: "请先解锁宠物园" };
+    const item = petFacility(id);
+    if (!item) return { ok: false, reason: "商品不存在" };
+    const cost = petFacilityCost(state, id);
+    if (cost == null) return { ok: false, reason: "已经达到最高级" };
+    if (state.coins < cost) return { ok: false, reason: "金币不够" };
+    if (item.kind === "consumable" && availableProduce(state) < PET_FOOD_PRODUCE_COST) {
+      return { ok: false, reason: `农场仓库至少需要 ${PET_FOOD_PRODUCE_COST} 份蔬菜` };
+    }
+    state.coins -= cost;
+    const cropsUsed = item.kind === "consumable" ? consumeProduce(state, PET_FOOD_PRODUCE_COST) : [];
+    if (item.kind === "consumable") state.petGarden.food += 5;
+    else state.petGarden.facilities[id] += 1;
+    return {
+      ok: true,
+      item,
+      cost,
+      cropsUsed,
+      level: item.kind === "consumable" ? state.petGarden.food : state.petGarden.facilities[id]
+    };
+  }
+
+  function interactPet(state, action, now = Date.now()) {
+    syncPetGarden(state, now);
+    const garden = state.petGarden;
+    const type = petType(garden.selectedPet);
+    const pet = garden.pets[garden.selectedPet];
+    if (!type || !pet?.owned) return { ok: false, reason: "先领养一只宠物吧" };
+    if (action === "feed") {
+      if (garden.food < 1) return { ok: false, reason: "宠物粮不够" };
+      if (pet.hunger >= 98) return { ok: false, reason: "它现在吃得很饱" };
+      garden.food -= 1;
+      pet.hunger = Math.min(100, pet.hunger + 34);
+    } else if (action === "pet") {
+      pet.happiness = Math.min(100, pet.happiness + 16 + (garden.facilities.picnic || 0) * 4);
+    } else if (action === "play") {
+      pet.happiness = Math.min(100, pet.happiness + 22 + (garden.facilities.toyBox || 0) * 7);
+      pet.hunger = Math.max(0, pet.hunger - 4);
+    } else if (action === "bathe") {
+      if (!garden.facilities.pond) return { ok: false, reason: "先修建浅水嬉戏池" };
+      pet.cleanliness = Math.min(100, pet.cleanliness + 48);
+      pet.happiness = Math.min(100, pet.happiness + 4);
+    } else if (action === "groom") {
+      if (!garden.facilities.grooming) return { ok: false, reason: "先购买宠物护理台" };
+      pet.cleanliness = Math.min(100, pet.cleanliness + 30);
+      pet.happiness = Math.min(100, pet.happiness + 10);
+    } else {
+      return { ok: false, reason: "未知互动" };
+    }
+    return { ok: true, action, pet: type, mood: petMood(pet) };
+  }
+
+  function claimPetIncome(state, now = Date.now()) {
+    syncPetGarden(state, now);
+    const amount = Math.floor(state.petGarden.visitorCoins);
+    if (amount < 1) return { ok: false, reason: "访客收益还在积累" };
+    state.petGarden.visitorCoins = 0;
+    state.coins += amount;
+    state.totalEarned += amount;
+    const compost = Math.floor(amount / 120);
+    state.compost += compost;
+    return { ok: true, amount, compost };
   }
 
   function completeMiniGame(state, type, score, success = true) {
@@ -542,8 +822,12 @@
     CROPS,
     LAND_COSTS,
     SHOP_ITEMS,
+    PET_GARDEN_COST,
+    PET_TYPES,
+    PET_FACILITIES,
     RESEARCH,
     FERTILIZER_COIN_COST,
+    PET_FOOD_PRODUCE_COST,
     cropById,
     xpNeeded,
     addXp,
@@ -575,6 +859,17 @@
     runAutomation,
     researchCost,
     buyResearch,
+    petType,
+    petFacility,
+    petFacilityCost,
+    petMood,
+    availableProduce,
+    syncPetGarden,
+    unlockPetGarden,
+    buyPet,
+    buyPetFacility,
+    interactPet,
+    claimPetIncome,
     completeMiniGame,
     spendSun,
     formatDuration
