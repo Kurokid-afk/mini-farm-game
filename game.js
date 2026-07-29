@@ -39,6 +39,19 @@ const GAME_NAMES = {
   market: "集市"
 };
 
+const LINK_SYMBOLS = [
+  { name: "萝卜", background: "#fff0e7", accent: "#e7684f" },
+  { name: "白菜", background: "#eef8df", accent: "#4f9b5e" },
+  { name: "土豆", background: "#f4e7cc", accent: "#a96f3d" },
+  { name: "番茄", background: "#ffe8e3", accent: "#d94b4b" },
+  { name: "玉米", background: "#fff5c9", accent: "#d4a82d" },
+  { name: "草莓", background: "#ffe6ed", accent: "#c93d63" },
+  { name: "茄子", background: "#f2e8fa", accent: "#8054a6" },
+  { name: "南瓜", background: "#fff0d8", accent: "#df8438" },
+  { name: "蘑菇", background: "#f9e8e5", accent: "#b95c67" },
+  { name: "豌豆", background: "#e4f5e7", accent: "#3d9160" }
+];
+
 function loadState() {
   try {
     return Core.normalizeState(JSON.parse(localStorage.getItem(SAVE_KEY)));
@@ -1036,8 +1049,140 @@ class HarvestCollection {
     this.link.score = Math.floor(previous * 0.1);
   }
 
+  drawLinkSymbol(symbol, x, y) {
+    const kind = symbol % LINK_SYMBOLS.length;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.strokeStyle = C.ink;
+    ctx.lineWidth = 2;
+
+    if (kind === 0) {
+      ctx.fillStyle = "#ef7655";
+      ctx.beginPath();
+      ctx.moveTo(-9, -6);
+      ctx.lineTo(9, -6);
+      ctx.lineTo(1, 12);
+      ctx.lineTo(-4, 12);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      this.line(-4, -7, -8, -14, C.greenDark, 3);
+      this.line(0, -7, 0, -15, C.greenDark, 3);
+      this.line(4, -7, 9, -13, C.greenDark, 3);
+    } else if (kind === 1) {
+      this.circle(-6, 1, 9, "#75bf6d", C.ink, 2);
+      this.circle(6, 1, 9, "#75bf6d", C.ink, 2);
+      this.circle(0, -4, 10, "#a9d98c", C.ink, 2);
+      this.line(0, -9, 0, 10, "#4f8d55", 2);
+      this.line(-7, -2, 0, 4, "#4f8d55", 2);
+      this.line(7, -2, 0, 4, "#4f8d55", 2);
+    } else if (kind === 2) {
+      ctx.fillStyle = "#c88c52";
+      ctx.beginPath();
+      ctx.ellipse(0, 1, 13, 10, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      this.circle(-5, -2, 1.5, "#805638");
+      this.circle(4, 4, 1.5, "#805638");
+      this.circle(6, -4, 1.2, "#805638");
+    } else if (kind === 3) {
+      this.circle(0, 2, 12, "#eb5d55", C.ink, 2);
+      ctx.fillStyle = C.greenDark;
+      ctx.beginPath();
+      for (let point = 0; point < 10; point += 1) {
+        const angle = -Math.PI / 2 + point * Math.PI / 5;
+        const radius = point % 2 ? 3 : 8;
+        ctx.lineTo(Math.cos(angle) * radius, -8 + Math.sin(angle) * radius * 0.55);
+      }
+      ctx.closePath();
+      ctx.fill();
+    } else if (kind === 4) {
+      this.rounded(-8, -13, 16, 25, 7, "#f1cb4f", C.ink, 2);
+      this.line(-3, -10, -3, 8, "#c7982f", 1);
+      this.line(3, -10, 3, 8, "#c7982f", 1);
+      this.line(-7, -4, 7, -4, "#c7982f", 1);
+      this.line(-7, 3, 7, 3, "#c7982f", 1);
+      ctx.fillStyle = "#5aa264";
+      ctx.beginPath();
+      ctx.moveTo(-8, 8);
+      ctx.lineTo(-14, 0);
+      ctx.lineTo(-9, 13);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(8, 8);
+      ctx.lineTo(14, 0);
+      ctx.lineTo(9, 13);
+      ctx.closePath();
+      ctx.fill();
+    } else if (kind === 5) {
+      ctx.fillStyle = "#dc4362";
+      ctx.beginPath();
+      ctx.moveTo(0, 13);
+      ctx.bezierCurveTo(-4, 8, -13, 0, -10, -7);
+      ctx.bezierCurveTo(-7, -13, -2, -10, 0, -6);
+      ctx.bezierCurveTo(2, -10, 7, -13, 10, -7);
+      ctx.bezierCurveTo(13, 0, 4, 8, 0, 13);
+      ctx.fill();
+      ctx.stroke();
+      this.circle(-5, 0, 1.2, C.yellow);
+      this.circle(4, 2, 1.2, C.yellow);
+      this.circle(0, 7, 1.2, C.yellow);
+      this.line(-6, -9, 0, -5, C.greenDark, 3);
+      this.line(6, -9, 0, -5, C.greenDark, 3);
+    } else if (kind === 6) {
+      ctx.save();
+      ctx.rotate(0.42);
+      ctx.fillStyle = "#8758a8";
+      ctx.beginPath();
+      ctx.ellipse(1, 2, 10, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = "#5a9b5c";
+      ctx.beginPath();
+      ctx.moveTo(-7, -9);
+      ctx.lineTo(2, -13);
+      ctx.lineTo(7, -7);
+      ctx.lineTo(0, -5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (kind === 7) {
+      this.circle(-6, 2, 10, "#e98a3e", C.ink, 2);
+      this.circle(6, 2, 10, "#e98a3e", C.ink, 2);
+      this.circle(0, 2, 11, "#f2a14d", C.ink, 2);
+      this.rect(-2, -13, 4, 7, C.greenDark, C.ink, 1);
+      this.line(0, -6, 0, 11, "#bd6631", 1);
+    } else if (kind === 8) {
+      ctx.fillStyle = "#d9787e";
+      ctx.beginPath();
+      ctx.arc(0, -2, 13, Math.PI, 0);
+      ctx.lineTo(13, 2);
+      ctx.lineTo(-13, 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      this.rounded(-5, 1, 10, 13, 3, "#f4ddbf", C.ink, 2);
+      this.circle(-6, -6, 2, C.paper);
+      this.circle(4, -8, 1.7, C.paper);
+    } else {
+      ctx.save();
+      ctx.rotate(-0.42);
+      this.rounded(-15, -7, 30, 14, 7, "#58a86c", C.ink, 2);
+      this.circle(-7, 0, 3.5, "#b9dda0", C.greenDark, 1);
+      this.circle(0, 0, 3.5, "#b9dda0", C.greenDark, 1);
+      this.circle(7, 0, 3.5, "#b9dda0", C.greenDark, 1);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   drawLinkTile(symbol, x, y, w, h, selected, hinted, options = {}) {
-    const crop = Core.CROPS[symbol % Core.CROPS.length];
+    const style = LINK_SYMBOLS[symbol % LINK_SYMBOLS.length];
     const scale = options.scale ?? 1;
     const alpha = options.alpha ?? 1;
     const offsetX = options.offsetX ?? 0;
@@ -1051,10 +1196,10 @@ class HarvestCollection {
       ctx.shadowColor = options.glow;
       ctx.shadowBlur = 12;
     }
-    this.rounded(-w / 2, -h / 2, w, h, 6, selected ? C.yellow : hinted ? C.greenSoft : C.cream, C.ink, selected ? 3 : 2);
-    this.drawCropIcon(crop.id, 0, 2, 0.75);
-    const marks = ["●", "◆", "▲", "■"];
-    this.text(marks[Math.floor(symbol / Core.CROPS.length) % marks.length], w / 2 - 10, -h / 2 + 10, 8, C.coral, "center", 900);
+    this.rounded(-w / 2, -h / 2, w, h, 6, selected ? C.yellow : hinted ? C.greenSoft : style.background, C.ink, selected ? 3 : 2);
+    this.drawLinkSymbol(symbol, 0, -5);
+    this.rounded(-20, 13, 40, 12, 3, "rgba(255,255,255,0.72)");
+    this.text(style.name, 0, 19, 9, style.accent, "center", 900);
     ctx.restore();
   }
 

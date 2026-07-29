@@ -281,6 +281,9 @@ await screenshot("08-small-window.png");
 const canvas = await page.locator("canvas").boundingBox();
 assert.ok(canvas.width >= 750);
 assert.ok(canvas.height >= 500);
+await page.evaluate(() => window.__uuHarvest.setView("link"));
+await page.waitForTimeout(120);
+await screenshot("09-link-small-window.png");
 assert.deepEqual(errors, []);
 
 await browser.close();
