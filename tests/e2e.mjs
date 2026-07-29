@@ -134,6 +134,11 @@ for (const cell of linkMove) await clickLogical(185 + cell.col * 74 + 33, 224 + 
 let textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
 assert.equal(textState.link.remaining, 38);
 assert.ok(textState.link.score > 0);
+assert.equal(textState.link.animating, true);
+await screenshot("04b-link-clear-animation.png");
+await page.evaluate(() => window.advanceTime(180));
+await screenshot("04c-link-particles-animation.png");
+await page.evaluate(() => window.advanceTime(260));
 
 await page.evaluate(() => window.__uuHarvest.setView("zuma"));
 await clickLogical(480, 300);
@@ -181,6 +186,33 @@ assert.equal(chainAfterRollback.gap, null);
 await screenshot("05b-zuma-rollback-chain.png");
 
 await page.evaluate(() => window.__uuHarvest.setView("match3"));
+const invalidSwap = await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  const board = app.match3.board;
+  for (let row = 0; row < 7; row += 1) {
+    for (let col = 0; col < 7; col += 1) {
+      for (const [dr, dc] of [[0, 1], [1, 0]]) {
+        const otherRow = row + dr;
+        const otherCol = col + dc;
+        if (otherRow >= 7 || otherCol >= 7) continue;
+        [board[row][col], board[otherRow][otherCol]] = [board[otherRow][otherCol], board[row][col]];
+        const valid = app.findMatches(board).size > 0;
+        [board[row][col], board[otherRow][otherCol]] = [board[otherRow][otherCol], board[row][col]];
+        if (!valid) return [{ row, col }, { row: otherRow, col: otherCol }];
+      }
+    }
+  }
+  return null;
+});
+assert.ok(invalidSwap);
+for (const cell of invalidSwap) await clickLogical(250 + cell.col * 54 + 27, 223 + cell.row * 54 + 27);
+textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+assert.equal(textState.match3.moves, 20);
+assert.equal(textState.match3.animation, "invalid");
+await page.evaluate(() => window.advanceTime(100));
+await screenshot("06a-match3-invalid-bounce.png");
+await page.evaluate(() => window.advanceTime(300));
+
 const swap = await page.evaluate(() => {
   const app = window.__uuHarvest.app;
   const board = app.match3.board;
@@ -205,7 +237,29 @@ textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
 assert.equal(textState.match3.moves, 19);
 assert.ok(textState.match3.score > 0);
 assert.ok(await page.evaluate(() => Boolean(window.__uuHarvest.app.findValidMatchSwap(window.__uuHarvest.app.match3.board))));
-await screenshot("06-match3.png");
+assert.equal(textState.match3.animation, "swap");
+await screenshot("06b-match3-swap-animation.png");
+await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  const segment = app.match3.animation.segments.find((entry) => entry.type === "pop");
+  window.advanceTime(Math.max(0, segment.startedAt + segment.duration / 2 - app.now()));
+});
+textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+assert.equal(textState.match3.animation, "pop");
+await screenshot("06c-match3-pop-animation.png");
+await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  const segment = app.match3.animation.segments.find((entry) => entry.type === "fall");
+  window.advanceTime(Math.max(0, segment.startedAt + segment.duration / 2 - app.now()));
+});
+textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+assert.equal(textState.match3.animation, "fall");
+await screenshot("06d-match3-fall-animation.png");
+await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  window.advanceTime(Math.max(0, app.match3.lockedUntil - app.now()) + 40);
+});
+await screenshot("06e-match3-settled.png");
 
 await page.evaluate(() => {
   const state = window.__uuHarvest.getState();

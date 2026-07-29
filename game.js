@@ -47,6 +47,19 @@ function loadState() {
   }
 }
 
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function easeInOut(value) {
+  const t = clamp01(value);
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function easeOut(value) {
+  return 1 - Math.pow(1 - clamp01(value), 3);
+}
+
 class HarvestCollection {
   constructor(scene) {
     this.scene = scene;
@@ -110,8 +123,30 @@ class HarvestCollection {
   update(dt, shouldRender = true) {
     this.frameNow = this.now();
     if (this.state.view === "zuma" && this.zuma) this.updateZuma(Math.min(dt, 0.05));
+    if (this.link?.pendingFinish && this.frameNow >= this.link.lockedUntil) {
+      this.finishLink(true);
+    } else if (this.link?.pendingShuffle && this.frameNow >= this.link.lockedUntil) {
+      this.link.pendingShuffle = false;
+      this.shuffleLink(false);
+      this.showToast("没有可消除组合，棋盘已自动重排");
+    }
     if (this.state.view === "link" && this.link && this.frameNow >= this.link.endAt && !this.link.over) {
       this.finishLink(false);
+    }
+    if (this.match3?.pendingFinish != null && this.frameNow >= this.match3.lockedUntil) {
+      const success = this.match3.pendingFinish;
+      this.match3.pendingFinish = null;
+      this.finishMatch3(success);
+    } else if (this.match3?.pendingShuffle && this.frameNow >= this.match3.lockedUntil) {
+      const before = this.cloneMatchBoard(this.match3.board);
+      this.match3.pendingShuffle = false;
+      do this.match3.board = this.createMatchBoard();
+      while (!this.findValidMatchSwap(this.match3.board));
+      this.startMatchShuffleAnimation(before);
+      this.showToast("没有可走步骤，棋盘已自动重排");
+    }
+    if (this.match3?.animation && this.frameNow > this.match3.animation.until + 30) {
+      this.match3.animation = null;
     }
     this.updateAutomationRobots();
     if (this.toast && this.frameNow > this.toast.until) this.toast = null;
@@ -837,9 +872,15 @@ class HarvestCollection {
       endAt: this.now() + 90_000,
       over: false,
       lastPath: null,
+      lastMatch: null,
+      invalidMatch: null,
       hint: null,
       pausedAt: null,
-      rounds: 0
+      rounds: 0,
+      selectedAt: 0,
+      lockedUntil: 0,
+      pendingFinish: false,
+      pendingShuffle: false
     };
     if (!this.findLinkMove()) this.shuffleLink(false);
   }
@@ -903,10 +944,11 @@ class HarvestCollection {
   }
 
   clickLinkCell(row, col) {
-    if (!this.link || this.link.over || this.link.board[row][col] == null) return;
+    if (!this.link || this.link.over || this.now() < this.link.lockedUntil || this.link.board[row][col] == null) return;
     const cell = { row, col };
     if (!this.link.selected) {
       this.link.selected = cell;
+      this.link.selectedAt = this.now();
       return;
     }
     const first = this.link.selected;
@@ -915,21 +957,36 @@ class HarvestCollection {
     if (!path) {
       this.link.combo = 0;
       this.link.selected = cell;
+      this.link.selectedAt = this.now();
+      this.link.invalidMatch = {
+        cells: [first, cell],
+        startedAt: this.now(),
+        until: this.now() + 360
+      };
       this.showToast("这两个图块连不起来", "bad", 900);
       return;
     }
+    const firstValue = this.link.board[first.row][first.col];
+    const secondValue = this.link.board[row][col];
     this.link.board[first.row][first.col] = null;
     this.link.board[row][col] = null;
     this.link.combo += 1;
     this.link.score += 90 + this.link.combo * 15;
-    this.link.lastPath = { path, until: this.now() + 500 };
+    const startedAt = this.now();
+    this.link.lastPath = { path, startedAt, until: startedAt + 560 };
+    this.link.lastMatch = {
+      cells: [{ ...first, value: firstValue }, { ...cell, value: secondValue }],
+      startedAt,
+      until: startedAt + 430,
+      combo: this.link.combo
+    };
+    this.link.lockedUntil = startedAt + 390;
     this.link.hint = null;
     const remaining = this.link.board.flat().filter((value) => value != null).length;
     if (!remaining) {
-      this.finishLink(true);
+      this.link.pendingFinish = true;
     } else if (!this.findLinkMove()) {
-      this.shuffleLink(false);
-      this.showToast("没有可消除组合，棋盘已自动重排");
+      this.link.pendingShuffle = true;
     }
   }
 
@@ -979,12 +1036,26 @@ class HarvestCollection {
     this.link.score = Math.floor(previous * 0.1);
   }
 
-  drawLinkTile(symbol, x, y, w, h, selected, hinted) {
+  drawLinkTile(symbol, x, y, w, h, selected, hinted, options = {}) {
     const crop = Core.CROPS[symbol % Core.CROPS.length];
-    this.rounded(x, y, w, h, 6, selected ? C.yellow : hinted ? C.greenSoft : C.cream, C.ink, selected ? 3 : 2);
-    this.drawCropIcon(crop.id, x + w / 2, y + h / 2 + 2, 0.75);
+    const scale = options.scale ?? 1;
+    const alpha = options.alpha ?? 1;
+    const offsetX = options.offsetX ?? 0;
+    const offsetY = options.offsetY ?? 0;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x + w / 2 + offsetX, y + h / 2 + offsetY);
+    ctx.scale(scale, scale);
+    if (options.glow) {
+      ctx.shadowColor = options.glow;
+      ctx.shadowBlur = 12;
+    }
+    this.rounded(-w / 2, -h / 2, w, h, 6, selected ? C.yellow : hinted ? C.greenSoft : C.cream, C.ink, selected ? 3 : 2);
+    this.drawCropIcon(crop.id, 0, 2, 0.75);
     const marks = ["●", "◆", "▲", "■"];
-    this.text(marks[Math.floor(symbol / Core.CROPS.length) % marks.length], x + w - 10, y + 10, 8, C.coral, "center", 900);
+    this.text(marks[Math.floor(symbol / Core.CROPS.length) % marks.length], w / 2 - 10, -h / 2 + 10, 8, C.coral, "center", 900);
+    ctx.restore();
   }
 
   drawLink() {
@@ -1008,24 +1079,79 @@ class HarvestCollection {
         const y = 224 + row * 66;
         const selected = this.link.selected?.row === row && this.link.selected?.col === col;
         const hinted = this.link.hint?.some((cell) => cell.row === row && cell.col === col);
+        const invalid = this.link.invalidMatch?.until > this.frameNow
+          && this.link.invalidMatch.cells.some((entry) => entry.row === row && entry.col === col);
+        const shakeProgress = invalid
+          ? clamp01((this.frameNow - this.link.invalidMatch.startedAt) / 360)
+          : 0;
+        const offsetX = invalid ? Math.sin(shakeProgress * Math.PI * 7) * 7 * (1 - shakeProgress) : 0;
+        const selectedPulse = selected ? 1 + Math.sin((this.frameNow - this.link.selectedAt) / 115) * 0.035 : 1;
         this.addHit("link-cell", x, y, 66, 56, { row, col });
-        this.drawLinkTile(value, x, y, 66, 56, selected, hinted);
+        this.drawLinkTile(value, x, y, 66, 56, selected, hinted, {
+          scale: selectedPulse,
+          offsetX,
+          glow: selected ? "rgba(243,201,85,0.7)" : null
+        });
       }
     }
 
     if (this.link.lastPath && this.link.lastPath.until > this.frameNow) {
+      const progress = clamp01((this.frameNow - this.link.lastPath.startedAt) / (this.link.lastPath.until - this.link.lastPath.startedAt));
       const points = this.link.lastPath.path.map((point) => {
         const row = point.row - 1;
         const col = point.col - 1;
         if (row >= 0 && row < this.link.rows && col >= 0 && col < this.link.cols) return this.linkCellCenter(row, col);
-        return { x: 185 + col * 74 + 33, y: 224 + row * 66 + 28 };
+        return {
+          x: col < 0 ? 178 : col >= this.link.cols ? 778 : 185 + col * 74 + 33,
+          y: row < 0 ? 218 : row >= this.link.rows ? 560 : 224 + row * 66 + 28
+        };
       });
       this.ctx.beginPath();
       this.ctx.moveTo(points[0].x, points[0].y);
       points.slice(1).forEach((point) => this.ctx.lineTo(point.x, point.y));
       this.ctx.strokeStyle = C.coral;
-      this.ctx.lineWidth = 4;
+      this.ctx.lineWidth = 3 + Math.sin(progress * Math.PI) * 3;
+      this.ctx.lineCap = "round";
+      this.ctx.setLineDash([10, 7]);
+      this.ctx.lineDashOffset = -progress * 55;
+      this.ctx.shadowColor = C.yellow;
+      this.ctx.shadowBlur = 10;
       this.ctx.stroke();
+      this.ctx.setLineDash([]);
+      this.ctx.shadowBlur = 0;
+    }
+    if (this.link.lastMatch && this.link.lastMatch.until > this.frameNow) {
+      const progress = clamp01((this.frameNow - this.link.lastMatch.startedAt) / (this.link.lastMatch.until - this.link.lastMatch.startedAt));
+      const burst = Math.sin(progress * Math.PI);
+      this.link.lastMatch.cells.forEach((entry, index) => {
+        const x = 185 + entry.col * 74;
+        const y = 224 + entry.row * 66;
+        this.drawLinkTile(entry.value, x, y, 66, 56, false, false, {
+          scale: 1 + burst * 0.22,
+          alpha: 1 - easeInOut(progress),
+          offsetY: -progress * 12,
+          glow: C.yellow
+        });
+        const center = this.linkCellCenter(entry.row, entry.col);
+        for (let particle = 0; particle < 7; particle += 1) {
+          const angle = (particle / 7) * Math.PI * 2 + index * 0.45;
+          const distance = easeOut(progress) * (22 + particle * 2);
+          const size = Math.max(1, 5 * (1 - progress));
+          this.rect(
+            center.x + Math.cos(angle) * distance - size / 2,
+            center.y + Math.sin(angle) * distance - size / 2 - progress * 8,
+            size,
+            size,
+            particle % 2 ? C.coral : C.yellow
+          );
+        }
+      });
+      const first = this.link.lastMatch.cells[0];
+      const center = this.linkCellCenter(first.row, first.col);
+      this.ctx.save();
+      this.ctx.globalAlpha = 1 - progress;
+      this.text(`连击 ×${this.link.lastMatch.combo}`, center.x + 48, center.y - 34 - progress * 18, 13 + burst * 3, C.coralDark, "center", 900);
+      this.ctx.restore();
     }
     this.text("完成一整盘可点亮庆典印记；没有可走组合时会自动重排", WIDTH / 2, 595, 10, C.inkSoft, "center", 700);
   }
@@ -1329,7 +1455,12 @@ class HarvestCollection {
       targetColor: (level + 1) % 6,
       target: 16 + level * 2,
       collected: 0,
-      combo: 0
+      combo: 0,
+      selectedAt: 0,
+      animation: null,
+      lockedUntil: 0,
+      pendingFinish: null,
+      pendingShuffle: false
     };
   }
 
@@ -1358,12 +1489,102 @@ class HarvestCollection {
     return matches;
   }
 
-  resolveMatchBoard() {
+  cloneMatchBoard(board) {
+    return board.map((row) => [...row]);
+  }
+
+  collapseMatchBoard() {
+    const nextBoard = Array.from({ length: 7 }, () => Array(7).fill(null));
+    const moves = [];
+    for (let col = 0; col < 7; col += 1) {
+      const survivors = [];
+      for (let row = 6; row >= 0; row -= 1) {
+        const color = this.match3.board[row][col];
+        if (color != null) survivors.push({ color, fromRow: row });
+      }
+      let targetRow = 6;
+      survivors.forEach((entry) => {
+        nextBoard[targetRow][col] = entry.color;
+        moves.push({ ...entry, col, toRow: targetRow, isNew: false });
+        targetRow -= 1;
+      });
+      let spawnIndex = 0;
+      while (targetRow >= 0) {
+        const color = Math.floor(Math.random() * 6);
+        nextBoard[targetRow][col] = color;
+        moves.push({ color, col, fromRow: -1 - spawnIndex, toRow: targetRow, isNew: true });
+        targetRow -= 1;
+        spawnIndex += 1;
+      }
+    }
+    this.match3.board = nextBoard;
+    return moves;
+  }
+
+  startMatchResolutionAnimation(beforeSwap, first, second, swappedBoard, steps) {
+    const segments = [];
+    let cursor = this.now();
+    segments.push({
+      type: "swap",
+      board: beforeSwap,
+      first,
+      second,
+      startedAt: cursor,
+      duration: 190
+    });
+    cursor += 190;
+    steps.forEach((step) => {
+      segments.push({ type: "pop", ...step, startedAt: cursor, duration: 220 });
+      cursor += 220;
+      segments.push({ type: "fall", ...step, startedAt: cursor, duration: 270 });
+      cursor += 270;
+    });
+    this.match3.animation = {
+      type: "resolution",
+      swappedBoard,
+      segments,
+      startedAt: this.now(),
+      until: cursor
+    };
+    this.match3.lockedUntil = cursor;
+  }
+
+  startInvalidMatchAnimation(board, first, second) {
+    const startedAt = this.now();
+    this.match3.animation = {
+      type: "invalid",
+      segments: [{ type: "invalid", board, first, second, startedAt, duration: 360 }],
+      startedAt,
+      until: startedAt + 360
+    };
+    this.match3.lockedUntil = startedAt + 360;
+  }
+
+  startMatchShuffleAnimation(before) {
+    const startedAt = this.now();
+    this.match3.animation = {
+      type: "shuffle",
+      segments: [{
+        type: "shuffle",
+        before,
+        after: this.cloneMatchBoard(this.match3.board),
+        startedAt,
+        duration: 440
+      }],
+      startedAt,
+      until: startedAt + 440
+    };
+    this.match3.lockedUntil = startedAt + 440;
+  }
+
+  resolveMatchBoard(animation = null) {
     let chain = 0;
+    const steps = [];
     while (chain < 10) {
       const matches = this.findMatches();
       if (!matches.size) break;
       chain += 1;
+      const before = this.cloneMatchBoard(this.match3.board);
       const removed = [];
       for (const key of matches) {
         const [row, col] = key.split(",").map(Number);
@@ -1374,23 +1595,28 @@ class HarvestCollection {
       const targetRemoved = removed.filter((entry) => entry.color === this.match3.targetColor).length;
       this.match3.collected += targetRemoved;
       this.match3.score += removed.length * 60 * chain;
-      for (let col = 0; col < 7; col += 1) {
-        const values = [];
-        for (let row = 6; row >= 0; row -= 1) {
-          if (this.match3.board[row][col] != null) values.push(this.match3.board[row][col]);
-        }
-        for (let row = 6; row >= 0; row -= 1) {
-          this.match3.board[row][col] = values[6 - row] ?? Math.floor(Math.random() * 6);
-        }
-      }
+      const moves = this.collapseMatchBoard();
+      steps.push({
+        chain,
+        before,
+        after: this.cloneMatchBoard(this.match3.board),
+        removed,
+        moves,
+        points: removed.length * 60 * chain
+      });
     }
     this.match3.combo = chain;
+    if (animation && steps.length) {
+      this.startMatchResolutionAnimation(animation.beforeSwap, animation.first, animation.second, animation.swappedBoard, steps);
+    }
     return chain;
   }
 
   clickMatchCell(row, col) {
+    if (!this.match3 || this.now() < this.match3.lockedUntil) return;
     if (!this.match3.selected) {
       this.match3.selected = { row, col };
+      this.match3.selectedAt = this.now();
       return;
     }
     const first = this.match3.selected;
@@ -1398,33 +1624,38 @@ class HarvestCollection {
     const adjacent = Math.abs(first.row - row) + Math.abs(first.col - col) === 1;
     if (!adjacent) {
       this.match3.selected = { row, col };
+      this.match3.selectedAt = this.now();
       return;
     }
     const board = this.match3.board;
+    const beforeSwap = this.cloneMatchBoard(board);
     [board[first.row][first.col], board[row][col]] = [board[row][col], board[first.row][first.col]];
     const matches = this.findMatches();
     if (!matches.size) {
       [board[first.row][first.col], board[row][col]] = [board[row][col], board[first.row][first.col]];
+      this.startInvalidMatchAnimation(beforeSwap, first, { row, col });
       this.showToast("这一步不能形成消除", "bad", 900);
       return;
     }
+    const swappedBoard = this.cloneMatchBoard(board);
     this.match3.moves -= 1;
-    this.resolveMatchBoard();
-    if (this.match3.collected >= this.match3.target) this.finishMatch3(true);
-    else if (this.match3.moves <= 0) this.finishMatch3(false);
+    this.resolveMatchBoard({ beforeSwap, first, second: { row, col }, swappedBoard });
+    if (this.match3.collected >= this.match3.target) this.match3.pendingFinish = true;
+    else if (this.match3.moves <= 0) this.match3.pendingFinish = false;
     else if (!this.findValidMatchSwap(this.match3.board)) {
-      do this.match3.board = this.createMatchBoard();
-      while (!this.findValidMatchSwap(this.match3.board));
-      this.showToast("没有可走步骤，棋盘已自动重排");
+      this.match3.pendingShuffle = true;
     }
   }
 
   shuffleMatch3() {
+    if (this.now() < this.match3.lockedUntil) return;
     const result = Core.spendSun(this.state, 2);
     if (!result.ok) return this.showToast(result.reason, "bad");
+    const before = this.cloneMatchBoard(this.match3.board);
     do this.match3.board = this.createMatchBoard();
     while (!this.findValidMatchSwap(this.match3.board));
     this.match3.selected = null;
+    this.startMatchShuffleAnimation(before);
     this.showToast("棋盘已重新排列");
   }
 
@@ -1437,11 +1668,20 @@ class HarvestCollection {
     this.match3.score = Math.floor(score * 0.1);
   }
 
-  drawGem(value, x, y, size, selected = false) {
+  drawGem(value, x, y, size, selected = false, options = {}) {
+    if (value == null) return;
     const crop = Core.CROPS[value];
     const ctx = this.ctx;
     ctx.save();
+    ctx.globalAlpha = options.alpha ?? 1;
     ctx.translate(x, y);
+    const scale = options.scale ?? 1;
+    ctx.scale(scale, scale);
+    ctx.rotate(options.rotation ?? 0);
+    if (options.glow) {
+      ctx.shadowColor = options.glow;
+      ctx.shadowBlur = 12;
+    }
     ctx.beginPath();
     ctx.moveTo(0, -size * 0.46);
     ctx.lineTo(size * 0.43, -size * 0.16);
@@ -1457,6 +1697,151 @@ class HarvestCollection {
     ctx.fillStyle = "rgba(255,255,255,0.55)";
     ctx.fillRect(-size * 0.18, -size * 0.24, size * 0.14, size * 0.14);
     ctx.restore();
+  }
+
+  activeMatchSegment() {
+    if (!this.match3.animation) return null;
+    return this.match3.animation.segments.find((segment) => (
+      this.frameNow >= segment.startedAt && this.frameNow <= segment.startedAt + segment.duration
+    )) || null;
+  }
+
+  drawMatchBoardCells(startX, startY, cell) {
+    for (let row = 0; row < 7; row += 1) {
+      for (let col = 0; col < 7; col += 1) {
+        const x = startX + col * cell;
+        const y = startY + row * cell;
+        this.rect(x + 2, y + 2, cell - 4, cell - 4, (row + col) % 2 ? "#f8efca" : "#fff9df");
+        this.addHit("match-cell", x, y, cell, cell, { row, col });
+      }
+    }
+  }
+
+  drawStaticMatchBoard(board, startX, startY, cell, excluded = [], selected = null) {
+    for (let row = 0; row < 7; row += 1) {
+      for (let col = 0; col < 7; col += 1) {
+        if (excluded.some((entry) => entry.row === row && entry.col === col)) continue;
+        const isSelected = selected?.row === row && selected?.col === col;
+        const pulse = isSelected ? 1 + Math.sin((this.frameNow - this.match3.selectedAt) / 110) * 0.055 : 1;
+        this.drawGem(board[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, 38, isSelected, {
+          scale: pulse,
+          glow: isSelected ? C.yellow : null
+        });
+      }
+    }
+  }
+
+  drawMatchAnimation(startX, startY, cell) {
+    const segment = this.activeMatchSegment();
+    if (!segment) {
+      this.drawStaticMatchBoard(this.match3.board, startX, startY, cell, [], this.match3.selected);
+      return;
+    }
+    const progress = clamp01((this.frameNow - segment.startedAt) / segment.duration);
+    if (segment.type === "swap" || segment.type === "invalid") {
+      const { first, second, board } = segment;
+      this.drawStaticMatchBoard(board, startX, startY, cell, [first, second]);
+      let travel;
+      if (segment.type === "invalid") {
+        travel = progress < 0.5 ? easeInOut(progress * 2) : 1 - easeInOut((progress - 0.5) * 2);
+      } else {
+        travel = easeInOut(progress);
+      }
+      const firstX = startX + (first.col + (second.col - first.col) * travel) * cell + cell / 2;
+      const firstY = startY + (first.row + (second.row - first.row) * travel) * cell + cell / 2;
+      const secondX = startX + (second.col + (first.col - second.col) * travel) * cell + cell / 2;
+      const secondY = startY + (second.row + (first.row - second.row) * travel) * cell + cell / 2;
+      const bump = 1 + Math.sin(progress * Math.PI) * 0.08;
+      this.drawGem(board[first.row][first.col], firstX, firstY, 38, false, { scale: bump, glow: C.yellow });
+      this.drawGem(board[second.row][second.col], secondX, secondY, 38, false, { scale: bump, glow: C.yellow });
+      return;
+    }
+    if (segment.type === "pop") {
+      const removedKeys = new Set(segment.removed.map((entry) => `${entry.row},${entry.col}`));
+      for (let row = 0; row < 7; row += 1) {
+        for (let col = 0; col < 7; col += 1) {
+          const removed = removedKeys.has(`${row},${col}`);
+          const burst = Math.sin(progress * Math.PI);
+          this.drawGem(segment.before[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, 38, false, {
+            scale: removed ? 1 + burst * 0.3 : 1,
+            alpha: removed ? 1 - easeInOut(progress) : 1,
+            rotation: removed ? burst * 0.18 : 0,
+            glow: removed ? C.yellow : null
+          });
+        }
+      }
+      segment.removed.forEach((entry, index) => {
+        const centerX = startX + entry.col * cell + cell / 2;
+        const centerY = startY + entry.row * cell + cell / 2;
+        for (let particle = 0; particle < 6; particle += 1) {
+          const angle = particle * Math.PI / 3 + index * 0.31;
+          const distance = easeOut(progress) * (18 + particle * 2);
+          const size = Math.max(1, 5 * (1 - progress));
+          this.rect(
+            centerX + Math.cos(angle) * distance - size / 2,
+            centerY + Math.sin(angle) * distance - size / 2,
+            size,
+            size,
+            particle % 2 ? C.coral : C.yellow
+          );
+        }
+      });
+      this.ctx.save();
+      this.ctx.globalAlpha = 1 - progress;
+      this.text(
+        `${segment.chain > 1 ? `连锁 ×${segment.chain}  ` : ""}+${segment.points}`,
+        startX + cell * 7 + 88,
+        startY + 120 - progress * 22,
+        15 + Math.sin(progress * Math.PI) * 3,
+        C.coralDark,
+        "center",
+        900
+      );
+      this.ctx.restore();
+      return;
+    }
+    if (segment.type === "fall") {
+      const fall = easeInOut(progress);
+      segment.moves.forEach((entry) => {
+        const row = entry.fromRow + (entry.toRow - entry.fromRow) * fall;
+        const bounce = entry.isNew ? Math.sin(progress * Math.PI) * 0.04 : 0;
+        if (entry.fromRow !== entry.toRow && progress < 0.88) {
+          const trailRow = row - Math.sign(entry.toRow - entry.fromRow) * 0.2;
+          this.drawGem(entry.color, startX + entry.col * cell + cell / 2, startY + trailRow * cell + cell / 2, 38, false, {
+            alpha: 0.16 * (1 - progress),
+            scale: 0.92
+          });
+        }
+        this.drawGem(entry.color, startX + entry.col * cell + cell / 2, startY + row * cell + cell / 2, 38, false, {
+          scale: 1 + bounce
+        });
+      });
+      return;
+    }
+    if (segment.type === "shuffle") {
+      if (progress < 0.5) {
+        const fade = progress * 2;
+        for (let row = 0; row < 7; row += 1) {
+          for (let col = 0; col < 7; col += 1) {
+            const direction = (row + col) % 2 ? 1 : -1;
+            this.drawGem(segment.before[row][col], startX + col * cell + cell / 2 + direction * fade * 18, startY + row * cell + cell / 2, 38, false, {
+              alpha: 1 - fade,
+              scale: 1 - fade * 0.3
+            });
+          }
+        }
+      } else {
+        const appear = easeOut((progress - 0.5) * 2);
+        for (let row = 0; row < 7; row += 1) {
+          for (let col = 0; col < 7; col += 1) {
+            this.drawGem(segment.after[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, 38, false, {
+              alpha: appear,
+              scale: 0.65 + appear * 0.35
+            });
+          }
+        }
+      }
+    }
   }
 
   drawMatch3() {
@@ -1477,16 +1862,13 @@ class HarvestCollection {
     const startY = 223;
     const cell = 54;
     this.rounded(startX - 12, startY - 12, cell * 7 + 24, cell * 7 + 24, 7, C.paper2, C.ink, 3);
-    for (let row = 0; row < 7; row += 1) {
-      for (let col = 0; col < 7; col += 1) {
-        const x = startX + col * cell;
-        const y = startY + row * cell;
-        this.rect(x + 2, y + 2, cell - 4, cell - 4, (row + col) % 2 ? "#f8efca" : "#fff9df");
-        this.addHit("match-cell", x, y, cell, cell, { row, col });
-        const selected = this.match3.selected?.row === row && this.match3.selected?.col === col;
-        this.drawGem(this.match3.board[row][col], x + cell / 2, y + cell / 2, 38, selected);
-      }
-    }
+    this.drawMatchBoardCells(startX, startY, cell);
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.rect(startX, startY, cell * 7, cell * 7);
+    this.ctx.clip();
+    this.drawMatchAnimation(startX, startY, cell);
+    this.ctx.restore();
     this.rounded(675, 246, 226, 172, 7, C.cream, C.ink, 2);
     this.text("本单装箱进度", 694, 268, 14, C.ink, "left", 900);
     this.drawCropIcon(targetCrop.id, 716, 315, 0.9);
@@ -1603,7 +1985,8 @@ class HarvestCollection {
         score: this.link.score,
         seconds: Math.max(0, Math.ceil((this.link.endAt - this.now()) / 1000)),
         remaining: this.link.board.flat().filter((value) => value != null).length,
-        selected: this.link.selected
+        selected: this.link.selected,
+        animating: this.now() < this.link.lockedUntil
       };
     }
     if (this.state.view === "zuma" && this.zuma) {
@@ -1622,7 +2005,8 @@ class HarvestCollection {
         score: this.match3.score,
         moves: this.match3.moves,
         objective: `${this.match3.collected}/${this.match3.target}`,
-        selected: this.match3.selected
+        selected: this.match3.selected,
+        animation: this.activeMatchSegment()?.type || null
       };
     }
     return JSON.stringify(payload);
