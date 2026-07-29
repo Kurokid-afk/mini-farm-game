@@ -11,8 +11,8 @@ android {
         applicationId "com.uu.harvestcollection.mobile"
         minSdkVersion 24
         targetSdkVersion 36
-        versionCode 240
-        versionName "2.4.0"
+        versionCode 250
+        versionName "2.5.0"
     }
 
     buildTypes {
@@ -21,13 +21,10 @@ android {
             signingConfig signingConfigs.debug
         }
     }
-}
 
-tasks.register("syncWebAssets", Copy) {
-    from("../../dist")
-    into("src/main/assets/www")
-}
-
-tasks.named("preBuild").configure {
-    dependsOn("syncWebAssets")
+    sourceSets {
+        main {
+            assets.srcDirs = []
+        }
+    }
 }

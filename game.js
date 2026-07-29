@@ -4,7 +4,6 @@ import petPortraitsUrl from "./assets/pet-portraits.png?url";
 import petSpritesUrl from "./assets/pet-sprites.png?url";
 import petFacilitiesUrl from "./assets/pet-facilities-v2.png?url";
 import petGardenBackgroundUrl from "./assets/pet-garden-bg.png?url";
-import zumaFarmBackgroundUrl from "./assets/zuma-farm-bg.png?url";
 import "./game-core.js";
 
 const Core = window.UUHarvestCore;
@@ -40,7 +39,6 @@ const C = {
 const GAME_NAMES = {
   farm: "农场",
   link: "连连看",
-  zuma: "祖玛",
   match3: "益智屋",
   market: "集市",
   pets: "宠物园"
@@ -95,12 +93,6 @@ const MERGE_TILES = [
   { name: "仓库", label: "仓", color: "#4d93ad", ink: "#203f55" }
 ];
 
-const ZUMA_BRIDGES = [
-  { start: 0.165, end: 0.215 },
-  { start: 0.56, end: 0.61 },
-  { start: 0.82, end: 0.865 }
-];
-
 function loadState() {
   try {
     return Core.normalizeState(JSON.parse(localStorage.getItem(SAVE_KEY)));
@@ -132,11 +124,9 @@ class HarvestCollection {
     this.hover = null;
     this.toast = null;
     this.link = null;
-    this.zuma = null;
     this.match3 = null;
     this.merge = null;
     this.puzzleMode = "match3";
-    this.zumaPathCache = null;
     this.robotJobs = [];
     this.actionEffects = [];
     this.maturePlots = new Set();
@@ -156,7 +146,7 @@ class HarvestCollection {
     this.petSprites = new Image();
     this.petSprites.src = petSpritesUrl;
     this.petSprites.onload = () => {
-      this.petSpriteCanvas = this.pixelateSpriteSheet(this.prepareChromaSprite(this.petSprites), 6, 4, 60);
+      this.petSpriteCanvas = this.pixelateSpriteSheet(this.prepareChromaSprite(this.petSprites, 30), 6, 4, 60);
       this.render();
     };
     this.petFacilities = new Image();
@@ -170,12 +160,6 @@ class HarvestCollection {
     this.petGardenBackground.onload = () => {
       this.render();
     };
-    this.zumaFarmBackground = new Image();
-    this.zumaFarmBackground.src = zumaFarmBackgroundUrl;
-    this.zumaFarmBackground.onload = () => {
-      this.render();
-    };
-
     this.surface = scene.textures.createCanvas("uu-surface", WIDTH, HEIGHT);
     this.ctx = this.surface.context;
     this.image = scene.add.image(WIDTH / 2, HEIGHT / 2, "uu-surface");
@@ -204,9 +188,6 @@ class HarvestCollection {
     scene.input.keyboard.on("keydown-F", () => this.toggleFullscreen());
     scene.input.keyboard.on("keydown-ESC", () => {
       if (scene.scale.isFullscreen) scene.scale.stopFullscreen();
-    });
-    scene.input.keyboard.on("keydown-SPACE", () => {
-      if (this.state.view === "zuma") this.swapZumaColor();
     });
     scene.input.keyboard.on("keydown", (event) => {
       if (this.state.view !== "match3" || this.puzzleMode !== "merge") return;
@@ -253,7 +234,6 @@ class HarvestCollection {
   update(dt, shouldRender = true) {
     this.frameNow = this.now();
     if (this.state.petGarden.unlocked) Core.syncPetGarden(this.state, this.frameNow);
-    if (this.state.view === "zuma" && this.zuma) this.updateZuma(Math.min(dt, 0.05));
     if (this.link?.pendingFinish && this.frameNow >= this.link.lockedUntil) {
       this.completeLinkBoard();
     } else if (this.link?.pendingShuffle && this.frameNow >= this.link.lockedUntil) {
@@ -349,6 +329,7 @@ class HarvestCollection {
   }
 
   switchView(view) {
+    if (!["farm", "link", "match3", "market", "pets"].includes(view)) view = "farm";
     if (view === "pets" && !this.state.petGarden.unlocked) {
       if (this.state.view !== "market") this.state.view = "market";
       this.showToast("先在集市购买宠物园地契", "normal");
@@ -368,7 +349,6 @@ class HarvestCollection {
 
   ensureMiniGame(view) {
     if (view === "link" && !this.link) this.startLinkRound();
-    if (view === "zuma" && !this.zuma) this.startZumaRound();
     if (view === "match3") {
       if (!this.match3) this.startMatch3Round();
       if (!this.merge) this.startMergeGame();
@@ -577,18 +557,18 @@ class HarvestCollection {
   }
 
   drawNav() {
-    const views = ["farm", "link", "zuma", "match3", "market", "pets"];
+    const views = ["farm", "link", "match3", "market", "pets"];
     views.forEach((view, index) => {
-      const x = 10 + index * 158;
-      const hit = this.addHit("nav", x, 83, 150, 45, { view });
+      const x = 10 + index * 190;
+      const hit = this.addHit("nav", x, 83, 182, 45, { view });
       const active = this.state.view === view;
       const petLocked = view === "pets" && !this.state.petGarden.unlocked;
-      this.rounded(x, 83, 150, 45, 6, active ? C.coral : this.isHover(hit) ? C.yellowSoft : petLocked ? C.paper2 : C.paper, C.ink, 2);
-      this.drawNavIcon(view, x + 25, 106, active);
-      this.text(petLocked ? "宠物园·锁" : GAME_NAMES[view], x + 84, 106, petLocked ? 11 : 13, active ? C.white : petLocked ? C.lock : C.ink, "center", 900);
-      if (["link", "zuma", "match3"].includes(view)) {
+      this.rounded(x, 83, 182, 45, 6, active ? C.coral : this.isHover(hit) ? C.yellowSoft : petLocked ? C.paper2 : C.paper, C.ink, 2);
+      this.drawNavIcon(view, x + 29, 106, active);
+      this.text(petLocked ? "宠物园·锁" : GAME_NAMES[view], x + 102, 106, petLocked ? 11 : 13, active ? C.white : petLocked ? C.lock : C.ink, "center", 900);
+      if (["link", "match3"].includes(view)) {
         const done = this.state.festival[view];
-        this.circle(x + 136, 96, 6, done ? C.yellow : C.paper2, C.ink, 1);
+        this.circle(x + 167, 96, 6, done ? C.yellow : C.paper2, C.ink, 1);
       }
     });
   }
@@ -605,10 +585,6 @@ class HarvestCollection {
       this.rounded(x - 13, y - 7, 12, 12, 2, primary, C.ink, 1);
       this.rounded(x + 2, y - 7, 12, 12, 2, primary, C.ink, 1);
       this.line(x - 1, y - 1, x + 2, y - 1, secondary, 3);
-    } else if (view === "zuma") {
-      this.circle(x - 10, y, 7, secondary, C.ink, 1);
-      this.circle(x + 1, y - 5, 7, primary, C.ink, 1);
-      this.circle(x + 11, y + 2, 7, C.yellow, C.ink, 1);
     } else if (view === "match3") {
       [[-8, -7], [6, -7], [-1, 6]].forEach(([dx, dy], index) => {
         const color = [primary, secondary, C.yellow][index];
@@ -663,27 +639,27 @@ class HarvestCollection {
   }
 
   drawMobileNav() {
-    const views = ["farm", "link", "zuma", "match3", "market", "pets"];
+    const views = ["farm", "link", "match3", "market", "pets"];
     this.rect(0, 888, WIDTH, 72, C.paper, C.ink, 2);
     views.forEach((view, index) => {
-      const x = 4 + index * 106;
+      const x = 4 + index * 127;
       const active = this.state.view === view;
       const petLocked = view === "pets" && !this.state.petGarden.unlocked;
-      const hit = this.addHit("nav", x, 892, 102, 64, { view });
-      if (active) this.rounded(x + 4, 896, 94, 56, 6, C.coral);
-      else if (this.isHover(hit)) this.rounded(x + 4, 896, 94, 56, 6, C.yellowSoft);
-      this.drawNavIcon(view, x + 51, 914, active);
+      const hit = this.addHit("nav", x, 892, 123, 64, { view });
+      if (active) this.rounded(x + 4, 896, 115, 56, 6, C.coral);
+      else if (this.isHover(hit)) this.rounded(x + 4, 896, 115, 56, 6, C.yellowSoft);
+      this.drawNavIcon(view, x + 61, 914, active);
       this.text(
         petLocked ? "宠物·锁" : GAME_NAMES[view],
-        x + 51,
+        x + 61,
         942,
         10,
         active ? C.white : petLocked ? C.lock : C.ink,
         "center",
         900
       );
-      if (["link", "zuma", "match3"].includes(view)) {
-        this.circle(x + 88, 903, 5, this.state.festival[view] ? C.yellow : C.paper2, C.ink, 1);
+      if (["link", "match3"].includes(view)) {
+        this.circle(x + 108, 903, 5, this.state.festival[view] ? C.yellow : C.paper2, C.ink, 1);
       }
     });
   }
@@ -699,7 +675,6 @@ class HarvestCollection {
     else if (this.state.view === "market") this.drawMobileMarket();
     else if (this.state.view === "pets") this.drawMobilePetGarden();
     else if (this.state.view === "link") this.drawMobileLink();
-    else if (this.state.view === "zuma") this.drawMobileZuma();
     else if (this.state.view === "match3") {
       if (this.puzzleMode === "merge") this.drawMobileMerge();
       else this.drawMobileMatch3();
@@ -835,8 +810,8 @@ class HarvestCollection {
     });
     this.rounded(322, 797, 300, 80, 6, C.cream, C.ink, 2);
     this.text(`庆典 · 第 ${this.state.festivalCount + 1} 轮`, 338, 818, 12, C.ink, "left", 900);
-    const progress = ["link", "zuma", "match3"].map((key, index) => (
-      `${["连", "祖", "益"][index]} ${this.state.festival[key] ? "完成" : `${this.state.festivalProgress[key]}/${this.state.festivalGoals[key]}`}`
+    const progress = ["link", "match3"].map((key, index) => (
+      `${["连", "益"][index]} ${this.state.festival[key] ? "完成" : `${this.state.festivalProgress[key]}/${this.state.festivalGoals[key]}`}`
     )).join("  ");
     this.text(progress, 338, 843, 9, C.greenDark, "left", 800);
     this.text(`游园礼袋 ${this.state.miniGiftProgress}/3`, 338, 864, 9, C.coralDark, "left", 800);
@@ -855,15 +830,15 @@ class HarvestCollection {
     this.rounded(646, 550, 302, 78, 7, C.paper, C.ink, 2);
     this.text(`丰收庆典 · 第 ${this.state.festivalCount + 1} 轮`, 662, 566, 14, C.ink, "left", 900);
     this.text("可反复完成 · 每轮目标不同", 932, 566, 9, C.greenDark, "right", 700);
-    ["link", "zuma", "match3"].forEach((key, index) => {
-      const x = 664 + index * 92;
+    ["link", "match3"].forEach((key, index) => {
+      const x = 664 + index * 138;
       const done = this.state.festival[key];
       const progress = this.state.festivalProgress[key];
       const goal = this.state.festivalGoals[key];
-      this.rounded(x, 580, 84, 21, 4, done ? C.greenSoft : C.paper2, C.ink, 1);
+      this.rounded(x, 580, 126, 21, 4, done ? C.greenSoft : C.paper2, C.ink, 1);
       this.text(
-        `${["连", "祖", "益"][index]} ${done ? "完成" : `${progress}/${goal}`}`,
-        x + 42,
+        `${["连连看", "益智"][index]} ${done ? "完成" : `${progress}/${goal}`}`,
+        x + 63,
         591,
         9,
         done ? C.greenDark : C.ink,
@@ -891,7 +866,6 @@ class HarvestCollection {
     else if (this.state.view === "market") this.drawMarket();
     else if (this.state.view === "pets") this.drawPetGarden();
     else if (this.state.view === "link") this.drawLink();
-    else if (this.state.view === "zuma") this.drawZuma();
     else if (this.state.view === "match3") {
       if (this.puzzleMode === "merge") this.drawMergeGame();
       else this.drawMatch3();
@@ -1694,7 +1668,7 @@ class HarvestCollection {
     ctx.restore();
   }
 
-  prepareChromaSprite(imageElement) {
+  prepareChromaSprite(imageElement, tolerance = 72) {
     const canvas = document.createElement("canvas");
     canvas.width = imageElement.naturalWidth;
     canvas.height = imageElement.naturalHeight;
@@ -1720,7 +1694,7 @@ class HarvestCollection {
       const green = pixels[offset + 1];
       const blue = pixels[offset + 2];
       return cornerColors.some(([cornerRed, cornerGreen, cornerBlue]) => (
-        Math.hypot(red - cornerRed, green - cornerGreen, blue - cornerBlue) < 72
+        Math.hypot(red - cornerRed, green - cornerGreen, blue - cornerBlue) < tolerance
       ));
     };
     const add = (index) => {
@@ -3600,642 +3574,6 @@ class HarvestCollection {
     });
   }
 
-  zumaRawPathPoint(progress) {
-    const p = Math.max(0, Math.min(1, progress));
-    if (MOBILE_LAYOUT) {
-      const xs = [
-        35, 75, 145, 235, 315, 350, 315, 235, 145, 82, 108, 185,
-        290, 400, 505, 575, 595, 540, 450, 350, 250, 205, 250, 350,
-        465, 545, 570, 525, 440, 345, 250, 155, 82, 125, 235, 365,
-        485, 585, 608
-      ];
-      const ys = [
-        350, 275, 230, 225, 270, 340, 410, 445, 425, 365, 300, 270,
-        295, 360, 435, 515, 585, 645, 680, 650, 590, 510, 430, 370,
-        320, 265, 225, 212, 245, 305, 380, 455, 535, 610, 655, 640,
-        585, 505, 425
-      ];
-      return {
-        x: Phaser.Math.Interpolation.CatmullRom(xs, p),
-        y: Phaser.Math.Interpolation.CatmullRom(ys, p)
-      };
-    }
-    const xs = [
-      42, 78, 145, 235, 315, 350, 315, 235, 145, 105, 135, 210,
-      315, 410, 455, 420, 345, 285, 340, 450, 545, 610, 665, 745,
-      825, 875, 845, 770, 680, 625, 655, 730, 820, 910
-    ];
-    const ys = [
-      390, 305, 250, 238, 275, 335, 400, 435, 420, 360, 300, 270,
-      300, 360, 425, 480, 498, 465, 410, 355, 315, 255, 235, 255,
-      305, 365, 425, 448, 435, 385, 325, 292, 320, 382
-    ];
-    return {
-      x: Phaser.Math.Interpolation.CatmullRom(xs, p),
-      y: Phaser.Math.Interpolation.CatmullRom(ys, p)
-    };
-  }
-
-  ensureZumaPathCache() {
-    if (this.zumaPathCache) return this.zumaPathCache;
-    const samples = 1400;
-    const points = [];
-    const distances = [0];
-    let length = 0;
-    for (let index = 0; index <= samples; index += 1) {
-      const point = this.zumaRawPathPoint(index / samples);
-      if (points.length) {
-        const previous = points[points.length - 1];
-        length += Phaser.Math.Distance.Between(previous.x, previous.y, point.x, point.y);
-        distances.push(length);
-      }
-      points.push(point);
-    }
-    this.zumaPathCache = { points, distances, length, samples };
-    return this.zumaPathCache;
-  }
-
-  zumaPathPoint(progress) {
-    const p = Math.max(0, Math.min(1, progress));
-    const cache = this.ensureZumaPathCache();
-    const target = p * cache.length;
-    let low = 0;
-    let high = cache.distances.length - 1;
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2);
-      if (cache.distances[middle] < target) low = middle + 1;
-      else high = middle;
-    }
-    const afterIndex = Math.max(1, low);
-    const beforeIndex = afterIndex - 1;
-    const span = Math.max(0.001, cache.distances[afterIndex] - cache.distances[beforeIndex]);
-    const ratio = (target - cache.distances[beforeIndex]) / span;
-    const before = cache.points[beforeIndex];
-    const after = cache.points[afterIndex];
-    return {
-      x: before.x + (after.x - before.x) * ratio,
-      y: before.y + (after.y - before.y) * ratio
-    };
-  }
-
-  zumaSpacing() {
-    return 29 / this.ensureZumaPathCache().length;
-  }
-
-  isZumaBridge(progress) {
-    return ZUMA_BRIDGES.some((bridge) => progress >= bridge.start && progress <= bridge.end);
-  }
-
-  startZumaRound() {
-    const colors = [0, 1, 2, 3, 4];
-    const balls = [];
-    const spacing = this.zumaSpacing();
-    for (let i = 0; i < 22; i += 1) {
-      balls.push({ color: colors[Math.floor(Math.random() * colors.length)], p: 0.36 - i * spacing });
-    }
-    this.zuma = {
-      balls,
-      projectiles: [],
-      currentColor: Math.floor(Math.random() * 5),
-      nextColor: Math.floor(Math.random() * 5),
-      score: 0,
-      combo: 0,
-      bestCombo: 0,
-      totalCleared: 0,
-      rewards: 0,
-      rewardCleared: 0,
-      nextRewardClears: 12,
-      spawned: 22,
-      spawnTimer: 0,
-      slowUntil: 0,
-      gap: null
-    };
-    this.zuma.currentColor = this.randomZumaColor();
-    this.zuma.nextColor = this.randomZumaColor();
-  }
-
-  randomZumaColor() {
-    const available = [...new Set((this.zuma?.balls || []).map((ball) => ball.color))];
-    const choices = available.length ? available : [0, 1, 2, 3, 4];
-    return choices[Math.floor(Math.random() * choices.length)];
-  }
-
-  zumaShooterOrigin() {
-    return MOBILE_LAYOUT ? { x: 320, y: 756 } : { x: 448, y: 558 };
-  }
-
-  shootZuma(x, y) {
-    if (!this.zuma) return;
-    const origin = this.zumaShooterOrigin();
-    const angle = Phaser.Math.Angle.Between(origin.x, origin.y, x, y);
-    this.zuma.projectiles.push({
-      x: origin.x,
-      y: origin.y,
-      vx: Math.cos(angle) * 560,
-      vy: Math.sin(angle) * 560,
-      color: this.zuma.currentColor
-    });
-    this.zuma.currentColor = this.zuma.nextColor;
-    this.zuma.nextColor = this.randomZumaColor();
-  }
-
-  insertZumaBall(projectile, hitIndex) {
-    const spacing = this.zumaSpacing();
-    if (this.zuma.gap) {
-      for (let index = 1; index < this.zuma.balls.length; index += 1) {
-        this.zuma.balls[index].p = this.zuma.balls[index - 1].p - spacing;
-      }
-      this.zuma.gap = null;
-    }
-    const hit = this.zuma.balls[hitIndex];
-    const point = this.zumaPathPoint(hit.p);
-    const beforePoint = this.zumaPathPoint(hit.p - 0.004);
-    const afterPoint = this.zumaPathPoint(hit.p + 0.004);
-    const tangentX = afterPoint.x - beforePoint.x;
-    const tangentY = afterPoint.y - beforePoint.y;
-    const projectileOffsetX = projectile.x - point.x;
-    const projectileOffsetY = projectile.y - point.y;
-    const insertBefore = projectileOffsetX * tangentX + projectileOffsetY * tangentY > 0;
-    const insertIndex = insertBefore ? hitIndex : hitIndex + 1;
-    const newBall = { color: projectile.color, p: hit.p + (insertBefore ? spacing / 2 : -spacing / 2) };
-    this.zuma.balls.splice(insertIndex, 0, newBall);
-    for (let i = 1; i < this.zuma.balls.length; i += 1) {
-      this.zuma.balls[i].p = Math.min(this.zuma.balls[i].p, this.zuma.balls[i - 1].p - spacing);
-    }
-    this.resolveZumaMatches(insertIndex);
-  }
-
-  resolveZumaMatches(index) {
-    const balls = this.zuma.balls;
-    if (!balls[index]) return;
-    const color = balls[index].color;
-    let left = index;
-    let right = index;
-    while (left > 0 && balls[left - 1].color === color) left -= 1;
-    while (right < balls.length - 1 && balls[right + 1].color === color) right += 1;
-    const count = right - left + 1;
-    if (count < 3) {
-      this.zuma.combo = 0;
-      return;
-    }
-    const clearedPoints = balls.slice(left, right + 1).map((ball) => this.zumaPathPoint(ball.p));
-    balls.splice(left, count);
-    this.zuma.combo += 1;
-    this.zuma.bestCombo = Math.max(this.zuma.bestCombo, this.zuma.combo);
-    this.zuma.totalCleared += count;
-    this.zuma.rewardCleared += count;
-    if (this.zuma.combo >= 2) this.zuma.rewardCleared += 2;
-    this.zuma.score += count * 110 * this.zuma.combo;
-    this.addActionEffect("zuma-pop", {
-      points: clearedPoints,
-      combo: this.zuma.combo,
-      view: "zuma"
-    }, 620);
-    this.awardZumaMilestones();
-    this.advanceFestival("zuma", count);
-    this.zuma.gap = left > 0 && left < balls.length
-      ? { frontEnd: left - 1, tailStart: left }
-      : null;
-    const available = new Set(balls.map((ball) => ball.color));
-    if (balls.length && !available.has(this.zuma.currentColor)) this.zuma.currentColor = this.randomZumaColor();
-    if (balls.length && !available.has(this.zuma.nextColor)) this.zuma.nextColor = this.randomZumaColor();
-  }
-
-  updateZuma(dt) {
-    if (!this.zuma) return;
-    const spacing = this.zumaSpacing();
-    const pathLength = this.ensureZumaPathCache().length;
-    if (!this.zuma.balls.length) {
-      for (let index = 0; index < 8; index += 1) {
-        this.zuma.balls.push({ color: Math.floor(Math.random() * 5), p: -index * spacing });
-      }
-      this.zuma.spawned += 8;
-      this.zuma.currentColor = this.randomZumaColor();
-      this.zuma.nextColor = this.randomZumaColor();
-    }
-    const slow = this.now() < this.zuma.slowUntil;
-    const speedPixels = 58 + Math.min(22, this.zuma.score / 180);
-    const speed = (speedPixels / pathLength) * (slow ? 0.45 : 1);
-    this.zuma.spawnTimer += dt;
-    if (this.zuma.spawnTimer >= 0.78 && this.zuma.balls.length < 44) {
-      this.zuma.spawnTimer = 0;
-      const tailP = this.zuma.balls.length ? this.zuma.balls[this.zuma.balls.length - 1].p : -0.03;
-      this.zuma.balls.push({ color: this.randomZumaColor(), p: Math.min(-spacing, tailP - spacing) });
-      this.zuma.spawned += 1;
-    }
-    if (this.zuma.balls.length) {
-      this.zuma.balls[0].p += speed * dt;
-      for (let i = 1; i < this.zuma.balls.length; i += 1) {
-        const desired = this.zuma.balls[i - 1].p - spacing;
-        this.zuma.balls[i].p = Math.min(desired, this.zuma.balls[i].p + speed * dt);
-      }
-      if (this.zuma.gap) {
-        const gap = this.zuma.gap;
-        const front = this.zuma.balls[gap.frontEnd];
-        const tail = this.zuma.balls[gap.tailStart];
-        if (!front || !tail) {
-          this.zuma.gap = null;
-        } else {
-          const distance = Math.max(0, front.p - tail.p - spacing);
-          const rollback = Math.min(distance, (185 / pathLength) * dt);
-          for (let index = 0; index <= gap.frontEnd; index += 1) this.zuma.balls[index].p -= rollback;
-          if (distance <= 0.001 || rollback >= distance) {
-            this.zuma.gap = null;
-            if (this.zuma.balls[gap.frontEnd]?.color === this.zuma.balls[gap.tailStart]?.color) {
-              this.resolveZumaMatches(gap.tailStart);
-            }
-          }
-        }
-      }
-      if (this.zuma.balls[0].p >= 0.995) {
-        const removed = Math.min(6, this.zuma.balls.length);
-        this.zuma.balls.splice(0, removed);
-        this.zuma.balls.forEach((ball) => {
-          ball.p -= spacing * (removed + 2);
-        });
-        this.zuma.combo = 0;
-        this.zuma.gap = null;
-        this.addActionEffect("zuma-barrier", {
-          ...this.zumaPathPoint(1),
-          view: "zuma"
-        }, 680);
-        this.showToast(`仓库挡板拦下 ${removed} 颗，继续清理`, "normal", 1800);
-      }
-    }
-    for (let i = this.zuma.projectiles.length - 1; i >= 0; i -= 1) {
-      const projectile = this.zuma.projectiles[i];
-      projectile.x += projectile.vx * dt;
-      projectile.y += projectile.vy * dt;
-      let hitIndex = -1;
-      for (let ballIndex = 0; ballIndex < this.zuma.balls.length; ballIndex += 1) {
-        const ball = this.zuma.balls[ballIndex];
-        if (ball.p < 0) continue;
-        const point = this.zumaPathPoint(ball.p);
-        if (Phaser.Math.Distance.Between(projectile.x, projectile.y, point.x, point.y) < 24) {
-          hitIndex = ballIndex;
-          break;
-        }
-      }
-      if (hitIndex >= 0) {
-        this.insertZumaBall(projectile, hitIndex);
-        this.zuma.projectiles.splice(i, 1);
-      } else if (projectile.x < -30 || projectile.x > WIDTH + 30 || projectile.y < 130 || projectile.y > HEIGHT + 30) {
-        this.zuma.projectiles.splice(i, 1);
-      }
-    }
-  }
-
-  awardZumaMilestones() {
-    while (this.zuma.rewardCleared >= this.zuma.nextRewardClears) {
-      const result = Core.claimMiniMilestone(this.state, "zuma");
-      this.zuma.rewards += result.reward.amount;
-      this.zuma.rewardCleared -= this.zuma.nextRewardClears;
-      this.showToast(
-        `清理 12 颗：堆肥 +${result.reward.amount}、品质祝福 +${result.reward.blessing}${this.miniGiftLabel(result.bonus)}`,
-        "good",
-        result.bonus ? 2800 : 2200
-      );
-    }
-  }
-
-  useZumaSlow() {
-    const result = Core.spendSun(this.state, 2);
-    if (!result.ok) return this.showToast(result.reason, "bad");
-    this.zuma.slowUntil = this.now() + 9000;
-    this.showToast("时间露水生效：队伍减速 9 秒", "good");
-  }
-
-  useZumaBomb() {
-    const result = Core.spendSun(this.state, 3);
-    if (!result.ok) return this.showToast(result.reason, "bad");
-    const removed = Math.min(4, this.zuma.balls.length);
-    this.zuma.balls.splice(0, removed);
-    this.zuma.totalCleared += removed;
-    this.zuma.rewardCleared += removed;
-    this.zuma.score += removed * 70;
-    this.awardZumaMilestones();
-    this.advanceFestival("zuma", removed);
-    this.showToast(`清理最前方 ${removed} 颗`, "good");
-  }
-
-  swapZumaColor() {
-    if (!this.zuma) return;
-    [this.zuma.currentColor, this.zuma.nextColor] = [this.zuma.nextColor, this.zuma.currentColor];
-  }
-
-  drawZumaBall(colorIndex, x, y, radius = 15) {
-    const crop = Core.CROPS[colorIndex % 5];
-    this.circle(x + 2, y + 3, radius, "rgba(52,70,74,0.22)");
-    this.circle(x, y, radius, crop.color, C.ink, 2);
-    this.circle(x, y, radius - 4, null, "rgba(255,255,255,0.35)", 2);
-    this.circle(x - radius * 0.3, y - radius * 0.3, radius * 0.2, "rgba(255,255,255,0.72)");
-    this.rect(x - 2, y - radius - 4, 4, 5, C.greenDark);
-  }
-
-  drawZumaActionEffects() {
-    this.actionEffects
-      .filter((effect) => effect.view === "zuma" && ["zuma-pop", "zuma-barrier"].includes(effect.type))
-      .forEach((effect) => {
-        const progress = this.effectProgress(effect);
-        if (effect.type === "zuma-pop") {
-          effect.points.forEach((point, pointIndex) => {
-            this.ctx.save();
-            this.ctx.globalAlpha = 1 - progress;
-            this.ctx.beginPath();
-            this.ctx.arc(point.x, point.y, 8 + progress * 22, 0, Math.PI * 2);
-            this.ctx.strokeStyle = pointIndex % 2 ? C.yellow : C.coral;
-            this.ctx.lineWidth = Math.max(1, 4 * (1 - progress));
-            this.ctx.stroke();
-            this.ctx.restore();
-            for (let particle = 0; particle < 6; particle += 1) {
-              const angle = particle * Math.PI / 3 + pointIndex * 0.35;
-              const distance = easeOut(progress) * (18 + particle * 2);
-              const size = Math.max(1, 5 * (1 - progress));
-              this.rect(
-                point.x + Math.cos(angle) * distance - size / 2,
-                point.y + Math.sin(angle) * distance - size / 2,
-                size,
-                size,
-                particle % 2 ? C.yellow : C.coral
-              );
-            }
-          });
-          const center = effect.points[Math.floor(effect.points.length / 2)];
-          if (center) {
-            this.ctx.save();
-            this.ctx.globalAlpha = 1 - progress;
-            this.text(
-              `连锁 ×${effect.combo}`,
-              center.x,
-              center.y - 28 - progress * 20,
-              13 + Math.sin(progress * Math.PI) * 3,
-              C.coralDark,
-              "center",
-              900
-            );
-            this.ctx.restore();
-          }
-        } else {
-          for (let particle = 0; particle < 12; particle += 1) {
-            const angle = Math.PI * 0.6 + (particle / 11) * Math.PI * 0.8;
-            const distance = easeOut(progress) * (28 + (particle % 4) * 8);
-            const size = Math.max(1, 7 * (1 - progress));
-            this.rect(
-              effect.x + Math.cos(angle) * distance - size / 2,
-              effect.y + Math.sin(angle) * distance - size / 2,
-              size,
-              size,
-              particle % 2 ? C.yellow : C.coral
-            );
-          }
-          this.ctx.save();
-          this.ctx.globalAlpha = 1 - progress;
-          this.circle(effect.x, effect.y, 18 + progress * 28, null, C.yellow, Math.max(1, 5 * (1 - progress)));
-          this.ctx.restore();
-        }
-      });
-  }
-
-  traceZumaTrack(start = 0, end = 1, steps = 240, offsetY = 0) {
-    this.ctx.beginPath();
-    for (let index = 0; index <= steps; index += 1) {
-      const progress = start + (end - start) * (index / steps);
-      const point = this.zumaPathPoint(progress);
-      if (index === 0) this.ctx.moveTo(point.x, point.y + offsetY);
-      else this.ctx.lineTo(point.x, point.y + offsetY);
-    }
-  }
-
-  strokeZumaTrack(start = 0, end = 1, raised = false) {
-    const steps = Math.max(20, Math.ceil((end - start) * 260));
-    this.ctx.save();
-    this.ctx.lineCap = "round";
-    this.ctx.lineJoin = "round";
-    this.traceZumaTrack(start, end, steps, raised ? 9 : 7);
-    this.ctx.strokeStyle = raised ? "rgba(67,55,48,0.58)" : "rgba(117,70,60,0.5)";
-    this.ctx.lineWidth = raised ? 48 : 46;
-    this.ctx.stroke();
-    this.traceZumaTrack(start, end, steps);
-    this.ctx.strokeStyle = raised ? "#405156" : "rgba(52,70,74,0.42)";
-    this.ctx.lineWidth = raised ? 45 : 43;
-    this.ctx.stroke();
-    this.ctx.strokeStyle = raised ? "#e7d6a4" : C.paper2;
-    this.ctx.lineWidth = raised ? 37 : 35;
-    this.ctx.stroke();
-    this.ctx.strokeStyle = raised ? "#fff8d8" : C.cream;
-    this.ctx.lineWidth = raised ? 27 : 25;
-    this.ctx.stroke();
-    this.ctx.strokeStyle = raised ? C.greenDark : C.inkSoft;
-    this.ctx.lineWidth = raised ? 3 : 2;
-    this.ctx.stroke();
-    if (raised) {
-      [start, end].forEach((progress) => {
-        const point = this.zumaPathPoint(progress);
-        this.circle(point.x, point.y + 7, 5, C.soilDark, C.ink, 1);
-        this.rect(point.x - 3, point.y - 15, 6, 23, C.paper2, C.ink, 1);
-      });
-    }
-    this.ctx.restore();
-  }
-
-  drawZumaDirections(start = 0, end = 1) {
-    const first = Math.ceil(start * 14);
-    const last = Math.floor(end * 14);
-    for (let index = first; index <= last; index += 1) {
-      const progress = index / 14;
-      if (progress <= start || progress >= end) continue;
-      const point = this.zumaPathPoint(progress);
-      const ahead = this.zumaPathPoint(Math.min(1, progress + 0.006));
-      const angle = Math.atan2(ahead.y - point.y, ahead.x - point.x);
-      this.ctx.save();
-      this.ctx.translate(point.x, point.y);
-      this.ctx.rotate(angle);
-      this.ctx.fillStyle = C.greenDark;
-      this.ctx.strokeStyle = C.cream;
-      this.ctx.lineWidth = 2;
-      this.ctx.beginPath();
-      this.ctx.moveTo(9, 0);
-      this.ctx.lineTo(-5, -7);
-      this.ctx.lineTo(-2, 0);
-      this.ctx.lineTo(-5, 7);
-      this.ctx.closePath();
-      this.ctx.fill();
-      this.ctx.stroke();
-      this.ctx.restore();
-    }
-  }
-
-  drawZuma() {
-    if (!this.zuma) this.startZumaRound();
-    this.text("田园祖玛", 22, 151, 18, C.ink, "left", 900);
-    this.rounded(20, 169, 920, 43, 6, C.paper, C.ink, 2);
-    this.text(`得分 ${this.zuma.score}`, 42, 191, 13, C.ink, "left", 900);
-    this.text(`连锁 ×${this.zuma.combo}`, 166, 191, 12, C.coralDark, "left", 800);
-    this.text(`堆肥 ${this.zuma.rewardCleared}/12 颗`, 286, 191, 11, C.greenDark, "left", 800);
-    this.text(
-      `庆典 ${this.state.festival.zuma ? "完成" : `${this.state.festivalProgress.zuma}/${this.state.festivalGoals.zuma} 颗`}`,
-      442,
-      191,
-      11,
-      C.ink,
-      "left",
-      800
-    );
-    this.button("减速 ☀2", 704, 175, 100, 30, "zuma-slow", {}, { fill: C.mint, size: 11 });
-    this.button("清障 ☀3", 814, 175, 108, 30, "zuma-bomb", {}, { fill: C.yellowSoft, size: 11 });
-
-    this.rounded(20, 222, 920, 400, 7, C.greenSoft, C.ink, 2);
-    if (this.zumaFarmBackground.complete && this.zumaFarmBackground.naturalWidth) {
-      const sourceWidth = this.zumaFarmBackground.naturalWidth;
-      const sourceHeight = Math.min(this.zumaFarmBackground.naturalHeight, Math.round(sourceWidth / (920 / 400)));
-      const sourceY = Math.max(0, Math.round((this.zumaFarmBackground.naturalHeight - sourceHeight) / 2));
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.roundRect(22, 224, 916, 396, 5);
-      this.ctx.clip();
-      this.ctx.imageSmoothingEnabled = false;
-      this.ctx.drawImage(this.zumaFarmBackground, 0, sourceY, sourceWidth, sourceHeight, 22, 224, 916, 396);
-      this.rect(22, 224, 916, 396, "rgba(235,248,222,0.16)");
-      this.ctx.restore();
-    }
-
-    this.strokeZumaTrack();
-    this.drawZumaDirections();
-    const end = this.zumaPathPoint(1);
-    this.rounded(end.x - 33, end.y - 27, 66, 54, 6, C.soilDark, C.ink, 3);
-    this.text("挡板", end.x, end.y + 1, 12, C.paper, "center", 900);
-
-    const origin = { x: 448, y: 558 };
-    if (this.hover && this.hover.y > 218 && this.hover.y < 620) {
-      const angle = Phaser.Math.Angle.Between(origin.x, origin.y, this.hover.x, this.hover.y);
-      const distance = Math.min(245, Phaser.Math.Distance.Between(origin.x, origin.y, this.hover.x, this.hover.y));
-      const guideX = origin.x + Math.cos(angle) * distance;
-      const guideY = origin.y + Math.sin(angle) * distance;
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.moveTo(origin.x, origin.y);
-      this.ctx.lineTo(guideX, guideY);
-      this.ctx.strokeStyle = "rgba(62,132,86,0.65)";
-      this.ctx.lineWidth = 2;
-      this.ctx.setLineDash([7, 7]);
-      this.ctx.stroke();
-      this.ctx.setLineDash([]);
-      this.circle(guideX, guideY, 7, null, C.greenDark, 2);
-      this.ctx.restore();
-    }
-
-    for (let i = this.zuma.balls.length - 1; i >= 0; i -= 1) {
-      const ball = this.zuma.balls[i];
-      if (ball.p < 0 || this.isZumaBridge(ball.p)) continue;
-      const point = this.zumaPathPoint(ball.p);
-      this.drawZumaBall(ball.color, point.x, point.y, 15);
-    }
-    ZUMA_BRIDGES.forEach((bridge) => {
-      this.strokeZumaTrack(bridge.start, bridge.end, true);
-      this.drawZumaDirections(bridge.start, bridge.end);
-    });
-    for (let i = this.zuma.balls.length - 1; i >= 0; i -= 1) {
-      const ball = this.zuma.balls[i];
-      if (ball.p < 0 || !this.isZumaBridge(ball.p)) continue;
-      const point = this.zumaPathPoint(ball.p);
-      this.drawZumaBall(ball.color, point.x, point.y, 15);
-    }
-    this.zuma.projectiles.forEach((projectile) => this.drawZumaBall(projectile.color, projectile.x, projectile.y, 11));
-    this.drawZumaActionEffects();
-
-    this.rounded(387, 526, 284, 78, 7, "rgba(255,253,240,0.9)", C.ink, 2);
-    this.circle(448, 565, 31, C.paper, C.ink, 3);
-    this.drawZumaBall(this.zuma.currentColor, 448, 558, 16);
-    this.text("发射", 448, 586, 9, C.ink, "center", 900);
-    this.text("下一颗", 519, 547, 9, C.greenDark, "center", 800);
-    this.drawZumaBall(this.zuma.nextColor, 519, 570, 11);
-    this.button("换色", 571, 551, 80, 31, "zuma-swap", {}, { fill: C.cream, size: 11 });
-    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 611, 592, 9, C.greenDark, "center", 800);
-  }
-
-  drawMobileZuma() {
-    if (!this.zuma) this.startZumaRound();
-    this.drawMobileTitle("田园祖玛", "点击轨道附近发射");
-    this.rounded(18, 151, 604, 45, 6, C.paper, C.ink, 2);
-    this.text(`得分 ${this.zuma.score}`, 34, 174, 11, C.ink, "left", 900);
-    this.text(`连锁 ×${this.zuma.combo}`, 158, 174, 10, C.coralDark, "left", 800);
-    this.text(`堆肥 ${this.zuma.rewardCleared}/12`, 278, 174, 10, C.greenDark, "left", 800);
-    this.text(
-      `庆典 ${this.state.festival.zuma ? "完成" : `${this.state.festivalProgress.zuma}/${this.state.festivalGoals.zuma}`}`,
-      442,
-      174,
-      10,
-      C.ink,
-      "left",
-      800
-    );
-    this.rounded(18, 204, 604, 586, 7, C.greenSoft, C.ink, 2);
-    if (this.zumaFarmBackground.complete && this.zumaFarmBackground.naturalWidth) {
-      const sw = this.zumaFarmBackground.naturalWidth;
-      const sh = this.zumaFarmBackground.naturalHeight;
-      const sourceWidth = Math.min(sw, Math.round(sh * (600 / 582)));
-      const sourceX = Math.max(0, Math.round((sw - sourceWidth) / 2));
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.roundRect(20, 206, 600, 582, 5);
-      this.ctx.clip();
-      this.ctx.imageSmoothingEnabled = false;
-      this.ctx.drawImage(this.zumaFarmBackground, sourceX, 0, sourceWidth, sh, 20, 206, 600, 582);
-      this.rect(20, 206, 600, 582, "rgba(235,248,222,0.2)");
-      this.ctx.restore();
-    }
-    this.strokeZumaTrack();
-    this.drawZumaDirections();
-    const end = this.zumaPathPoint(1);
-    this.rounded(end.x - 25, end.y - 23, 50, 46, 6, C.soilDark, C.ink, 3);
-    this.text("挡板", end.x, end.y + 1, 9, C.paper, "center", 900);
-
-    const origin = this.zumaShooterOrigin();
-    if (this.hover && this.hover.y > 200 && this.hover.y < 790) {
-      const angle = Phaser.Math.Angle.Between(origin.x, origin.y, this.hover.x, this.hover.y);
-      const distance = Math.min(300, Phaser.Math.Distance.Between(origin.x, origin.y, this.hover.x, this.hover.y));
-      const guideX = origin.x + Math.cos(angle) * distance;
-      const guideY = origin.y + Math.sin(angle) * distance;
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.moveTo(origin.x, origin.y);
-      this.ctx.lineTo(guideX, guideY);
-      this.ctx.strokeStyle = "rgba(62,132,86,0.65)";
-      this.ctx.lineWidth = 2;
-      this.ctx.setLineDash([7, 7]);
-      this.ctx.stroke();
-      this.ctx.setLineDash([]);
-      this.circle(guideX, guideY, 7, null, C.greenDark, 2);
-      this.ctx.restore();
-    }
-    for (let index = this.zuma.balls.length - 1; index >= 0; index -= 1) {
-      const ball = this.zuma.balls[index];
-      if (ball.p < 0 || this.isZumaBridge(ball.p)) continue;
-      const point = this.zumaPathPoint(ball.p);
-      this.drawZumaBall(ball.color, point.x, point.y, 15);
-    }
-    ZUMA_BRIDGES.forEach((bridge) => {
-      this.strokeZumaTrack(bridge.start, bridge.end, true);
-      this.drawZumaDirections(bridge.start, bridge.end);
-    });
-    for (let index = this.zuma.balls.length - 1; index >= 0; index -= 1) {
-      const ball = this.zuma.balls[index];
-      if (ball.p < 0 || !this.isZumaBridge(ball.p)) continue;
-      const point = this.zumaPathPoint(ball.p);
-      this.drawZumaBall(ball.color, point.x, point.y, 15);
-    }
-    this.zuma.projectiles.forEach((projectile) => this.drawZumaBall(projectile.color, projectile.x, projectile.y, 11));
-    this.drawZumaActionEffects();
-    this.circle(origin.x, origin.y + 7, 32, C.paper, C.ink, 3);
-    this.drawZumaBall(this.zuma.currentColor, origin.x, origin.y, 16);
-    this.text("发射", origin.x, origin.y + 27, 9, C.ink, "center", 900);
-    this.text("下一颗", origin.x + 68, origin.y - 19, 9, C.greenDark, "center", 800);
-    this.drawZumaBall(this.zuma.nextColor, origin.x + 68, origin.y + 5, 11);
-
-    this.button("减速 ☀2", 18, 800, 192, 76, "zuma-slow", {}, { fill: C.mint, size: 11 });
-    this.button("换色", 224, 800, 192, 76, "zuma-swap", {}, { fill: C.cream, size: 11 });
-    this.button("清障 ☀3", 430, 800, 192, 76, "zuma-bomb", {}, { fill: C.yellowSoft, size: 11 });
-  }
 
   matchPaletteForMilestone(milestone = 0) {
     return [...MATCH_PALETTES[Math.max(0, milestone) % MATCH_PALETTES.length]];
@@ -5386,9 +4724,6 @@ class HarvestCollection {
       } else if (hit.type === "link-cell") this.clickLinkCell(hit.row, hit.col);
       else if (hit.type === "link-hint") this.hintLink();
       else if (hit.type === "link-shuffle") this.shuffleLink(true);
-      else if (hit.type === "zuma-slow") this.useZumaSlow();
-      else if (hit.type === "zuma-bomb") this.useZumaBomb();
-      else if (hit.type === "zuma-swap") this.swapZumaColor();
       else if (hit.type === "puzzle-mode") {
         this.puzzleMode = hit.mode;
         this.toast = null;
@@ -5400,13 +4735,6 @@ class HarvestCollection {
       this.render();
       return;
     }
-    if (
-      this.state.view === "zuma"
-      && !rightButton
-      && y > (MOBILE_LAYOUT ? 204 : 205)
-      && (!MOBILE_LAYOUT || y < 790)
-    ) this.shootZuma(x, y);
-    if (this.state.view === "zuma" && rightButton) this.swapZumaColor();
   }
 
   textState() {
@@ -5467,20 +4795,6 @@ class HarvestCollection {
         rewards: this.link.rewards,
         selected: this.link.selected,
         animating: this.now() < this.link.lockedUntil
-      };
-    }
-    if (this.state.view === "zuma" && this.zuma) {
-      payload.zuma = {
-        score: this.zuma.score,
-        chainLength: this.zuma.balls.length,
-        totalCleared: this.zuma.totalCleared,
-        rewardCleared: this.zuma.rewardCleared,
-        nextRewardClears: this.zuma.nextRewardClears,
-        ballSpacingPixels: 29,
-        trackLength: Math.round(this.ensureZumaPathCache().length),
-        rewards: this.zuma.rewards,
-        currentColor: this.zuma.currentColor,
-        nextColor: this.zuma.nextColor
       };
     }
     if (this.state.view === "match3" && this.match3) {
@@ -5554,7 +4868,6 @@ class MainScene extends Phaser.Scene {
       reset: () => {
         appInstance.state = Core.createDefaultState();
         appInstance.link = null;
-        appInstance.zuma = null;
         appInstance.match3 = null;
         appInstance.merge = null;
         appInstance.puzzleMode = "match3";

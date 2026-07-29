@@ -185,6 +185,19 @@ state = await page.evaluate(() => window.__uuHarvest.getState());
 assert.equal(state.petGarden.pets.cat.owned, true);
 assert.equal(state.petGarden.pets.rabbit.owned, true);
 assert.equal(state.petGarden.pets.chick.owned, true);
+const rabbitFrameAlphaCounts = await page.evaluate(() => {
+  const canvas = window.__uuHarvest.app.petSpriteCanvas;
+  const context = canvas.getContext("2d");
+  return Array.from({ length: 6 }, (_, column) => {
+    const pixels = context.getImageData(column * 60, 120, 60, 36).data;
+    let visible = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] > 32) visible += 1;
+    }
+    return visible;
+  });
+});
+assert.ok(rabbitFrameAlphaCounts.every((visible) => visible > 80));
 await page.waitForTimeout(220);
 await screenshot("03e-all-pet-routines.png");
 await clickLogical(543, 196);
@@ -274,127 +287,6 @@ assert.equal(textState.link.remaining, 40);
 assert.equal(textState.link.clearedBoards, 1);
 assert.ok(textState.link.rewards > 0);
 
-await page.evaluate(() => window.__uuHarvest.setView("zuma"));
-const zumaDifficulty = await page.evaluate(() => {
-  const app = window.__uuHarvest.app;
-  const before = app.zuma.balls[0].p;
-  const points = Array.from({ length: 41 }, (_, index) => app.zumaPathPoint(index / 40));
-  let directionChanges = 0;
-  let horizontalReversals = 0;
-  let previousDirection = 0;
-  let previousHorizontalDirection = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    const direction = Math.sign(points[index].y - points[index - 1].y);
-    if (direction && previousDirection && direction !== previousDirection) directionChanges += 1;
-    if (direction) previousDirection = direction;
-    const horizontalDirection = Math.sign(points[index].x - points[index - 1].x);
-    if (horizontalDirection && previousHorizontalDirection && horizontalDirection !== previousHorizontalDirection) horizontalReversals += 1;
-    if (horizontalDirection) previousHorizontalDirection = horizontalDirection;
-  }
-  window.advanceTime(1000);
-  return {
-    progressDelta: app.zuma.balls[0].p - before,
-    pixelDelta: (app.zuma.balls[0].p - before) * app.ensureZumaPathCache().length,
-    directionChanges,
-    horizontalReversals,
-    chainLength: app.zuma.balls.length,
-    spacingPixels: app.zumaSpacing() * app.ensureZumaPathCache().length
-  };
-});
-assert.ok(zumaDifficulty.pixelDelta >= 55);
-assert.ok(zumaDifficulty.directionChanges >= 6);
-assert.ok(zumaDifficulty.horizontalReversals >= 4);
-assert.ok(zumaDifficulty.chainLength >= 20);
-assert.ok(Math.abs(zumaDifficulty.spacingPixels - 29) < 0.1);
-await clickLogical(480, 300);
-await page.waitForTimeout(100);
-const zumaActivity = await page.evaluate(() => {
-  const zuma = window.__uuHarvest.app.zuma;
-  return { projectiles: zuma.projectiles.length, score: zuma.score, balls: zuma.balls.length };
-});
-assert.ok(zumaActivity.projectiles > 0 || zumaActivity.score > 0 || zumaActivity.balls !== 18);
-await screenshot("05-zuma.png");
-
-const gapBefore = await page.evaluate(() => {
-  const app = window.__uuHarvest.app;
-  const spacing = app.zumaSpacing();
-  app.zuma.balls = [
-    { color: 0, p: 0.48 },
-    { color: 0, p: 0.48 - spacing },
-    { color: 1, p: 0.42 },
-    { color: 1, p: 0.42 - spacing },
-    { color: 1, p: 0.42 - spacing * 2 },
-    { color: 0, p: 0.36 },
-    { color: 2, p: 0.36 - spacing }
-  ];
-  app.zuma.projectiles = [];
-  app.zuma.spawned = 7;
-  app.zuma.spawnTimer = -100;
-  app.zuma.score = 0;
-  app.zuma.rewardCleared = 0;
-  app.resolveZumaMatches(3);
-  const gap = app.zuma.gap;
-  return app.zuma.balls[gap.frontEnd].p - app.zuma.balls[gap.tailStart].p - spacing;
-});
-assert.ok(gapBefore > 0.08);
-textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
-assert.ok(textState.activeEffects.includes("zuma-pop"));
-await screenshot("05a-zuma-pop-animation.png");
-await page.evaluate(() => window.advanceTime(450));
-const gapAfter = await page.evaluate(() => {
-  const app = window.__uuHarvest.app;
-  const gap = app.zuma.gap;
-  return gap ? app.zuma.balls[gap.frontEnd].p - app.zuma.balls[gap.tailStart].p - app.zumaSpacing() : 0;
-});
-assert.ok(gapAfter < gapBefore);
-await page.evaluate(() => window.advanceTime(1500));
-const chainAfterRollback = await page.evaluate(() => ({
-  colors: window.__uuHarvest.app.zuma.balls.map((ball) => ball.color),
-  gap: window.__uuHarvest.app.zuma.gap
-}));
-assert.ok(chainAfterRollback.colors.length >= 1);
-assert.ok(chainAfterRollback.colors.every((color) => color === 2));
-assert.equal(chainAfterRollback.gap, null);
-await screenshot("05b-zuma-rollback-chain.png");
-const zumaMilestone = await page.evaluate(() => {
-  const app = window.__uuHarvest.app;
-  const spacing = app.zumaSpacing();
-  app.zuma.rewardCleared = 10;
-  app.zuma.combo = 0;
-  app.zuma.balls = [
-    { color: 0, p: 0.2 },
-    { color: 0, p: 0.2 - spacing },
-    { color: 0, p: 0.2 - spacing * 2 },
-    { color: 2, p: 0.2 - spacing * 3 }
-  ];
-  const before = app.zuma.rewards;
-  app.resolveZumaMatches(1);
-  return {
-    rewardDelta: app.zuma.rewards - before,
-    rewardCleared: app.zuma.rewardCleared,
-    chainLength: app.zuma.balls.length
-  };
-});
-assert.ok(zumaMilestone.rewardDelta > 0);
-assert.equal(zumaMilestone.rewardCleared, 1);
-assert.ok(zumaMilestone.chainLength >= 1);
-await page.evaluate(() => {
-  const app = window.__uuHarvest.app;
-  const spacing = app.zumaSpacing();
-  app.zuma.balls = [
-    { color: 0, p: 0.999 },
-    { color: 1, p: 0.999 - spacing },
-    { color: 2, p: 0.999 - spacing * 2 },
-    { color: 3, p: 0.999 - spacing * 3 },
-    { color: 4, p: 0.999 - spacing * 4 },
-    { color: 0, p: 0.999 - spacing * 5 },
-    { color: 1, p: 0.999 - spacing * 6 }
-  ];
-  window.advanceTime(80);
-});
-textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
-assert.ok(textState.activeEffects.includes("zuma-barrier"));
-await screenshot("05c-zuma-barrier-animation.png");
 
 await page.evaluate(() => window.__uuHarvest.setView("match3"));
 const invalidSwap = await page.evaluate(() => {
@@ -523,16 +415,15 @@ assert.ok(textState.merge.rewardMerges >= 3);
 
 await page.evaluate(() => {
   const state = window.__uuHarvest.getState();
-  state.festival = { link: false, zuma: false, match3: false };
-  state.festivalProgress = { link: 0, zuma: 0, match3: 0 };
+  state.festival = { link: false, match3: false };
+  state.festivalProgress = { link: 0, match3: 0 };
   window.__uuHarvest.completeMini("link");
-  window.__uuHarvest.completeMini("zuma");
   window.__uuHarvest.completeMini("match3");
 });
 state = await page.evaluate(() => window.__uuHarvest.getState());
 assert.ok(state.stars >= 1);
-assert.deepEqual(state.festival, { link: false, zuma: false, match3: false });
-assert.deepEqual(state.festivalProgress, { link: 0, zuma: 0, match3: 0 });
+assert.deepEqual(state.festival, { link: false, match3: false });
+assert.deepEqual(state.festivalProgress, { link: 0, match3: 0 });
 
 await page.evaluate(() => window.__uuHarvest.setView("market"));
 await screenshot("07-market.png");
@@ -546,9 +437,6 @@ assert.ok(canvas.height >= 500);
 await page.evaluate(() => window.__uuHarvest.setView("link"));
 await page.waitForTimeout(120);
 await screenshot("09-link-small-window.png");
-await page.evaluate(() => window.__uuHarvest.setView("zuma"));
-await page.waitForTimeout(180);
-await screenshot("10-zuma-small-window.png");
 await page.evaluate(() => {
   window.__uuHarvest.app.puzzleMode = "match3";
   window.__uuHarvest.setView("match3");

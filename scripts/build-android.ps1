@@ -14,7 +14,6 @@ if (-not $env:ANDROID_HOME -and (Test-Path -LiteralPath "$env:LOCALAPPDATA\Andro
 
 Push-Location $root
 try {
-    npm run build:web
     $aapt2 = Join-Path $env:ANDROID_HOME "build-tools\36.0.0\aapt2.exe"
     if (-not (Test-Path -LiteralPath $aapt2)) {
         throw "Android Build-Tools 36.0.0 is required."
@@ -26,7 +25,7 @@ try {
     }
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
     Copy-Item -LiteralPath $apk -Destination $target -Force
-    Write-Host "APK: $target"
+    Write-Host "Native APK: $target"
 } finally {
     Pop-Location
 }

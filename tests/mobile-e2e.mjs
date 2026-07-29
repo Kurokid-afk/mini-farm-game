@@ -100,12 +100,6 @@ await shot("06-pet-garden.png");
 await page.evaluate(() => window.__uuHarvest.setView("link"));
 await shot("07-link.png");
 await tap(54, 280);
-await page.evaluate(() => window.__uuHarvest.setView("zuma"));
-await page.waitForTimeout(200);
-await shot("08-zuma.png");
-textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
-assert.equal(textState.zuma.ballSpacingPixels, 29);
-assert.ok(textState.zuma.trackLength > 2500);
 
 await page.evaluate(() => {
   window.__uuHarvest.app.puzzleMode = "match3";

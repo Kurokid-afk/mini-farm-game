@@ -5,15 +5,15 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createCore() {
   "use strict";
 
-  const VERSION = 3;
+  const VERSION = 4;
   const PLOT_COUNT = 12;
   const FERTILIZER_COIN_COST = 4;
   const PET_FOOD_PRODUCE_COST = 2;
   const FESTIVAL_GOAL_PATTERNS = [
-    { link: 6, zuma: 18, match3: 24 },
-    { link: 7, zuma: 20, match3: 27 },
-    { link: 8, zuma: 18, match3: 24 },
-    { link: 6, zuma: 22, match3: 30 }
+    { link: 6, match3: 24 },
+    { link: 7, match3: 27 },
+    { link: 8, match3: 24 },
+    { link: 6, match3: 30 }
   ];
 
   const CROPS = [
@@ -169,8 +169,8 @@
       miniGiftProgress: 0,
       miniGiftCount: 0,
       festivalCount: 0,
-      festival: { link: false, zuma: false, match3: false },
-      festivalProgress: { link: 0, zuma: 0, match3: 0 },
+      festival: { link: false, match3: false },
+      festivalProgress: { link: 0, match3: 0 },
       festivalGoals: festivalGoalsForRound(0),
       research: { growth: 0, mini: 0, orders: 0 },
       upgrades: Object.fromEntries(SHOP_ITEMS.filter((item) => item.kind !== "consumable").map((item) => [item.id, 0])),
@@ -195,7 +195,6 @@
         harvested: 0,
         orders: 0,
         linkRounds: 0,
-        zumaRounds: 0,
         match3Rounds: 0
       },
       alwaysOnTop: false,
@@ -234,16 +233,18 @@
       state[key] = Math.floor(clampNumber(raw[key], fallback[key]));
     }
     state.miniGiftProgress %= 3;
-    state.festival = { ...fallback.festival, ...(raw.festival || {}) };
+    state.festival = Object.fromEntries(
+      ["link", "match3"].map((type) => [type, Boolean(raw.festival?.[type])])
+    );
     const defaultFestivalGoals = festivalGoalsForRound(state.festivalCount);
     state.festivalGoals = Object.fromEntries(
-      ["link", "zuma", "match3"].map((type) => [
+      ["link", "match3"].map((type) => [
         type,
         Math.max(1, Math.floor(clampNumber(raw.festivalGoals?.[type], defaultFestivalGoals[type], 1)))
       ])
     );
     state.festivalProgress = Object.fromEntries(
-      ["link", "zuma", "match3"].map((type) => {
+      ["link", "match3"].map((type) => {
         const migratedProgress = state.festival[type] ? state.festivalGoals[type] : 0;
         const progress = Math.floor(clampNumber(raw.festivalProgress?.[type], migratedProgress));
         return [type, Math.min(state.festivalGoals[type], progress)];
@@ -255,7 +256,9 @@
     state.seeds = { ...fallback.seeds, ...(raw.seeds || {}) };
     state.produce = { ...fallback.produce, ...(raw.produce || {}) };
     state.qualityStock = { ...fallback.qualityStock, ...(raw.qualityStock || {}) };
-    state.stats = { ...fallback.stats, ...(raw.stats || {}) };
+    state.stats = Object.fromEntries(
+      Object.keys(fallback.stats).map((key) => [key, Math.floor(clampNumber(raw.stats?.[key], fallback.stats[key]))])
+    );
     const rawGarden = raw.petGarden || {};
     state.petGarden = {
       ...fallback.petGarden,
@@ -334,7 +337,7 @@
       : [];
     state.orderSerial = Math.max(3, Math.floor(clampNumber(raw.orderSerial, 3)));
     while (state.orders.length < 3) state.orders.push(createOrder(state.level, state.orderSerial++));
-    const allowedViews = ["farm", "link", "zuma", "match3", "market", "pets"];
+    const allowedViews = ["farm", "link", "match3", "market", "pets"];
     state.view = allowedViews.includes(raw.view) ? raw.view : "farm";
     if (state.view === "pets" && !state.petGarden.unlocked) state.view = "market";
     state.selected = raw.selected && ["seed", "water", "fertilizer", "hand", "automation", "soil"].includes(raw.selected.type)
@@ -814,13 +817,6 @@
       state.seedTickets += amount;
       state.stats.linkRounds += 1;
       reward = { resource: "seedTickets", amount };
-    } else if (type === "zuma") {
-      const amount = 1 + Math.floor(rewardLevel / 2);
-      const blessing = 1 + Math.floor(rewardLevel / 3);
-      state.compost += amount;
-      state.pestBlessing += blessing;
-      state.stats.zumaRounds += 1;
-      reward = { resource: "compost", amount, blessing };
     } else if (type === "match3") {
       const amount = 1 + Math.floor(rewardLevel / 3);
       state.orderSeals += amount;
@@ -854,7 +850,7 @@
   }
 
   function advanceFestival(state, type, amount = 1) {
-    if (!["link", "zuma", "match3"].includes(type)) {
+    if (!["link", "match3"].includes(type)) {
       return { ok: false, reason: "未知庆典项目" };
     }
     const goal = Math.max(1, state.festivalGoals[type]);
@@ -869,13 +865,13 @@
     if (completed) state.festival[type] = true;
 
     let festival = null;
-    if (state.festival.link && state.festival.zuma && state.festival.match3) {
+    if (state.festival.link && state.festival.match3) {
       const coins = 140 + state.level * 25 + state.festivalCount * 15;
       state.festivalCount += 1;
       state.stars += 1;
       state.coins += coins;
-      state.festival = { link: false, zuma: false, match3: false };
-      state.festivalProgress = { link: 0, zuma: 0, match3: 0 };
+      state.festival = { link: false, match3: false };
+      state.festivalProgress = { link: 0, match3: 0 };
       state.festivalGoals = festivalGoalsForRound(state.festivalCount);
       festival = {
         coins,
