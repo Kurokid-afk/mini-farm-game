@@ -1,8 +1,8 @@
 {
   "name": "uu-harvest-collection",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "private": true,
-  "description": "像素农场、宠物园与连连看、祖玛、消消乐联动的桌面合集",
+  "description": "像素农场、宠物园与四种无限小游戏联动的桌面和 Android 合集",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 4173",
@@ -12,6 +12,7 @@
     "build": "npm run assets && npm run build:web && electron-builder --win portable",
     "test:logic": "node tests/core.test.cjs",
     "test:e2e": "node tests/e2e.mjs",
+    "test:mobile": "node tests/mobile-e2e.mjs",
     "test:electron": "node tests/electron-e2e.mjs"
   },
   "dependencies": {

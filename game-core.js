@@ -5,10 +5,16 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createCore() {
   "use strict";
 
-  const VERSION = 2;
+  const VERSION = 3;
   const PLOT_COUNT = 12;
   const FERTILIZER_COIN_COST = 4;
   const PET_FOOD_PRODUCE_COST = 2;
+  const FESTIVAL_GOAL_PATTERNS = [
+    { link: 6, zuma: 18, match3: 24 },
+    { link: 7, zuma: 20, match3: 27 },
+    { link: 8, zuma: 18, match3: 24 },
+    { link: 6, zuma: 22, match3: 30 }
+  ];
 
   const CROPS = [
     { id: "radish", name: "萝卜", level: 1, duration: 120_000, seedPrice: 5, sellPrice: 9, yield: 1, color: "#f4c8c4" },
@@ -125,6 +131,11 @@
     return { crop: null, soil: 0, lastCropId: null };
   }
 
+  function festivalGoalsForRound(completedRounds = 0) {
+    const index = Math.max(0, Math.floor(completedRounds)) % FESTIVAL_GOAL_PATTERNS.length;
+    return { ...FESTIVAL_GOAL_PATTERNS[index] };
+  }
+
   function createPetGarden(now = Date.now()) {
     return {
       unlocked: false,
@@ -155,8 +166,12 @@
       orderSeals: 0,
       sun: 3,
       stars: 0,
+      miniGiftProgress: 0,
+      miniGiftCount: 0,
       festivalCount: 0,
       festival: { link: false, zuma: false, match3: false },
+      festivalProgress: { link: 0, zuma: 0, match3: 0 },
+      festivalGoals: festivalGoalsForRound(0),
       research: { growth: 0, mini: 0, orders: 0 },
       upgrades: Object.fromEntries(SHOP_ITEMS.filter((item) => item.kind !== "consumable").map((item) => [item.id, 0])),
       inventory: { soilKit: 0 },
@@ -205,10 +220,35 @@
     state.coins = clampNumber(raw.coins, fallback.coins);
     state.level = Math.max(1, Math.floor(clampNumber(raw.level, 1, 1)));
     state.xp = clampNumber(raw.xp, 0);
-    for (const key of ["seedTickets", "compost", "orderSeals", "sun", "stars", "festivalCount", "pestBlessing"]) {
+    for (const key of [
+      "seedTickets",
+      "compost",
+      "orderSeals",
+      "sun",
+      "stars",
+      "miniGiftProgress",
+      "miniGiftCount",
+      "festivalCount",
+      "pestBlessing"
+    ]) {
       state[key] = Math.floor(clampNumber(raw[key], fallback[key]));
     }
+    state.miniGiftProgress %= 3;
     state.festival = { ...fallback.festival, ...(raw.festival || {}) };
+    const defaultFestivalGoals = festivalGoalsForRound(state.festivalCount);
+    state.festivalGoals = Object.fromEntries(
+      ["link", "zuma", "match3"].map((type) => [
+        type,
+        Math.max(1, Math.floor(clampNumber(raw.festivalGoals?.[type], defaultFestivalGoals[type], 1)))
+      ])
+    );
+    state.festivalProgress = Object.fromEntries(
+      ["link", "zuma", "match3"].map((type) => {
+        const migratedProgress = state.festival[type] ? state.festivalGoals[type] : 0;
+        const progress = Math.floor(clampNumber(raw.festivalProgress?.[type], migratedProgress));
+        return [type, Math.min(state.festivalGoals[type], progress)];
+      })
+    );
     state.research = { ...fallback.research, ...(raw.research || {}) };
     state.upgrades = { ...fallback.upgrades, ...(raw.upgrades || {}) };
     state.inventory = { ...fallback.inventory, ...(raw.inventory || {}) };
@@ -789,21 +829,75 @@
     } else {
       return { ok: false, reason: "未知小游戏" };
     }
+    state.miniGiftProgress += 1;
+    let bonus = null;
+    if (state.miniGiftProgress >= 3) {
+      state.miniGiftProgress = 0;
+      state.miniGiftCount += 1;
+      const giftType = (state.miniGiftCount - 1) % 3;
+      if (giftType === 0) {
+        const amount = 45 + state.level * 8;
+        state.coins += amount;
+        state.totalEarned += amount;
+        bonus = { type: "coins", amount };
+      } else if (giftType === 1) {
+        state.sun += 2;
+        bonus = { type: "sun", amount: 2 };
+      } else {
+        state.seedTickets += 1;
+        state.compost += 1;
+        state.orderSeals += 1;
+        bonus = { type: "supplies", amount: 1 };
+      }
+    }
+    return { ok: true, reward, bonus, festival: null };
+  }
+
+  function advanceFestival(state, type, amount = 1) {
+    if (!["link", "zuma", "match3"].includes(type)) {
+      return { ok: false, reason: "未知庆典项目" };
+    }
+    const goal = Math.max(1, state.festivalGoals[type]);
+    if (state.festival[type]) {
+      return { ok: true, completed: false, progress: goal, goal, festival: null };
+    }
+    state.festivalProgress[type] = Math.min(
+      goal,
+      state.festivalProgress[type] + Math.max(0, Math.floor(amount))
+    );
+    const completed = state.festivalProgress[type] >= goal;
+    if (completed) state.festival[type] = true;
+
     let festival = null;
-    state.festival[type] = true;
     if (state.festival.link && state.festival.zuma && state.festival.match3) {
-      const coins = 120 + state.level * 25 + state.festivalCount * 10;
-      state.festival = { link: false, zuma: false, match3: false };
+      const coins = 140 + state.level * 25 + state.festivalCount * 15;
       state.festivalCount += 1;
       state.stars += 1;
       state.coins += coins;
-      festival = { coins, stars: 1, count: state.festivalCount };
+      state.festival = { link: false, zuma: false, match3: false };
+      state.festivalProgress = { link: 0, zuma: 0, match3: 0 };
+      state.festivalGoals = festivalGoalsForRound(state.festivalCount);
+      festival = {
+        coins,
+        stars: 1,
+        count: state.festivalCount,
+        nextGoals: { ...state.festivalGoals }
+      };
     }
-    return { ok: true, reward, festival };
+    return {
+      ok: true,
+      completed,
+      progress: completed ? goal : state.festivalProgress[type],
+      goal,
+      festival
+    };
   }
 
   function completeMiniGame(state, type) {
-    return claimMiniMilestone(state, type);
+    const result = claimMiniMilestone(state, type);
+    if (!result.ok) return result;
+    const festivalResult = advanceFestival(state, type, state.festivalGoals[type]);
+    return { ...result, festival: festivalResult.festival };
   }
 
   function spendSun(state, amount) {
@@ -832,6 +926,7 @@
     RESEARCH,
     FERTILIZER_COIN_COST,
     PET_FOOD_PRODUCE_COST,
+    FESTIVAL_GOAL_PATTERNS,
     cropById,
     xpNeeded,
     addXp,
@@ -875,6 +970,7 @@
     interactPet,
     claimPetIncome,
     claimMiniMilestone,
+    advanceFestival,
     completeMiniGame,
     spendSun,
     formatDuration

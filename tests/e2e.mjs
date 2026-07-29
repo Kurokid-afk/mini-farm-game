@@ -250,9 +250,24 @@ await page.evaluate(() => {
   app.link.board = Array.from({ length: app.link.rows }, () => Array(app.link.cols).fill(null));
   app.link.board[0][0] = 0;
   app.link.board[0][1] = 0;
+  app.link.board[1][0] = 1;
+  app.link.board[1][1] = 1;
+  app.link.rewardPairs = 6;
+  app.link.selected = null;
+  app.link.lastPath = null;
+  app.link.lastMatch = null;
+  app.link.shiftAnimation = null;
+  app.link.lockedUntil = 0;
 });
 await clickLogical(185 + 33, 224 + 28);
 await clickLogical(185 + 74 + 33, 224 + 28);
+await page.evaluate(() => window.advanceTime(230));
+await screenshot("04d-link-flow-animation.png");
+assert.equal(await page.evaluate(() => window.__uuHarvest.app.link.board[4][0]), 1);
+assert.equal(await page.evaluate(() => window.__uuHarvest.app.link.board[4][1]), 1);
+await page.evaluate(() => window.advanceTime(500));
+await clickLogical(185 + 33, 224 + 4 * 66 + 28);
+await clickLogical(185 + 74 + 33, 224 + 4 * 66 + 28);
 await page.evaluate(() => window.advanceTime(500));
 textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
 assert.equal(textState.link.remaining, 40);
@@ -279,15 +294,18 @@ const zumaDifficulty = await page.evaluate(() => {
   window.advanceTime(1000);
   return {
     progressDelta: app.zuma.balls[0].p - before,
+    pixelDelta: (app.zuma.balls[0].p - before) * app.ensureZumaPathCache().length,
     directionChanges,
     horizontalReversals,
-    chainLength: app.zuma.balls.length
+    chainLength: app.zuma.balls.length,
+    spacingPixels: app.zumaSpacing() * app.ensureZumaPathCache().length
   };
 });
-assert.ok(zumaDifficulty.progressDelta >= 0.022);
+assert.ok(zumaDifficulty.pixelDelta >= 55);
 assert.ok(zumaDifficulty.directionChanges >= 6);
 assert.ok(zumaDifficulty.horizontalReversals >= 4);
 assert.ok(zumaDifficulty.chainLength >= 20);
+assert.ok(Math.abs(zumaDifficulty.spacingPixels - 29) < 0.1);
 await clickLogical(480, 300);
 await page.waitForTimeout(100);
 const zumaActivity = await page.evaluate(() => {
@@ -299,25 +317,26 @@ await screenshot("05-zuma.png");
 
 const gapBefore = await page.evaluate(() => {
   const app = window.__uuHarvest.app;
+  const spacing = app.zumaSpacing();
   app.zuma.balls = [
-    { color: 0, p: 0.634 },
-    { color: 0, p: 0.6 },
-    { color: 1, p: 0.566 },
-    { color: 1, p: 0.532 },
-    { color: 1, p: 0.498 },
-    { color: 0, p: 0.464 },
-    { color: 2, p: 0.43 }
+    { color: 0, p: 0.48 },
+    { color: 0, p: 0.48 - spacing },
+    { color: 1, p: 0.42 },
+    { color: 1, p: 0.42 - spacing },
+    { color: 1, p: 0.42 - spacing * 2 },
+    { color: 0, p: 0.36 },
+    { color: 2, p: 0.36 - spacing }
   ];
   app.zuma.projectiles = [];
   app.zuma.spawned = 7;
-  app.zuma.spawnTimer = 0;
+  app.zuma.spawnTimer = -100;
   app.zuma.score = 0;
-  app.zuma.nextRewardScore = 1500;
+  app.zuma.rewardCleared = 0;
   app.resolveZumaMatches(3);
   const gap = app.zuma.gap;
-  return app.zuma.balls[gap.frontEnd].p - app.zuma.balls[gap.tailStart].p - 0.034;
+  return app.zuma.balls[gap.frontEnd].p - app.zuma.balls[gap.tailStart].p - spacing;
 });
-assert.ok(gapBefore > 0.09);
+assert.ok(gapBefore > 0.08);
 textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
 assert.ok(textState.activeEffects.includes("zuma-pop"));
 await screenshot("05a-zuma-pop-animation.png");
@@ -325,10 +344,10 @@ await page.evaluate(() => window.advanceTime(450));
 const gapAfter = await page.evaluate(() => {
   const app = window.__uuHarvest.app;
   const gap = app.zuma.gap;
-  return gap ? app.zuma.balls[gap.frontEnd].p - app.zuma.balls[gap.tailStart].p - 0.034 : 0;
+  return gap ? app.zuma.balls[gap.frontEnd].p - app.zuma.balls[gap.tailStart].p - app.zumaSpacing() : 0;
 });
 assert.ok(gapAfter < gapBefore);
-await page.evaluate(() => window.advanceTime(600));
+await page.evaluate(() => window.advanceTime(1500));
 const chainAfterRollback = await page.evaluate(() => ({
   colors: window.__uuHarvest.app.zuma.balls.map((ball) => ball.color),
   gap: window.__uuHarvest.app.zuma.gap
@@ -339,35 +358,37 @@ assert.equal(chainAfterRollback.gap, null);
 await screenshot("05b-zuma-rollback-chain.png");
 const zumaMilestone = await page.evaluate(() => {
   const app = window.__uuHarvest.app;
-  app.zuma.score = 1490;
-  app.zuma.nextRewardScore = 1500;
+  const spacing = app.zumaSpacing();
+  app.zuma.rewardCleared = 10;
+  app.zuma.combo = 0;
   app.zuma.balls = [
     { color: 0, p: 0.2 },
-    { color: 0, p: 0.166 },
-    { color: 0, p: 0.132 },
-    { color: 2, p: 0.098 }
+    { color: 0, p: 0.2 - spacing },
+    { color: 0, p: 0.2 - spacing * 2 },
+    { color: 2, p: 0.2 - spacing * 3 }
   ];
   const before = app.zuma.rewards;
   app.resolveZumaMatches(1);
   return {
     rewardDelta: app.zuma.rewards - before,
-    nextRewardScore: app.zuma.nextRewardScore,
+    rewardCleared: app.zuma.rewardCleared,
     chainLength: app.zuma.balls.length
   };
 });
 assert.ok(zumaMilestone.rewardDelta > 0);
-assert.equal(zumaMilestone.nextRewardScore, 3000);
+assert.equal(zumaMilestone.rewardCleared, 1);
 assert.ok(zumaMilestone.chainLength >= 1);
 await page.evaluate(() => {
   const app = window.__uuHarvest.app;
+  const spacing = app.zumaSpacing();
   app.zuma.balls = [
     { color: 0, p: 0.999 },
-    { color: 1, p: 0.965 },
-    { color: 2, p: 0.931 },
-    { color: 3, p: 0.897 },
-    { color: 4, p: 0.863 },
-    { color: 0, p: 0.829 },
-    { color: 1, p: 0.795 }
+    { color: 1, p: 0.999 - spacing },
+    { color: 2, p: 0.999 - spacing * 2 },
+    { color: 3, p: 0.999 - spacing * 3 },
+    { color: 4, p: 0.999 - spacing * 4 },
+    { color: 0, p: 0.999 - spacing * 5 },
+    { color: 1, p: 0.999 - spacing * 6 }
   ];
   window.advanceTime(80);
 });
@@ -431,7 +452,9 @@ await screenshot("06b-match3-swap-animation.png");
 await page.evaluate(() => {
   const app = window.__uuHarvest.app;
   const segment = app.match3.animation.segments.find((entry) => entry.type === "pop");
-  window.advanceTime(Math.max(0, segment.startedAt + segment.duration / 2 - app.now()));
+  app.scene.game.loop.sleep();
+  app.frameNow = segment.startedAt + segment.duration / 2;
+  app.render();
 });
 textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
 assert.equal(textState.match3.animation, "pop");
@@ -439,13 +462,15 @@ await screenshot("06c-match3-pop-animation.png");
 await page.evaluate(() => {
   const app = window.__uuHarvest.app;
   const segment = app.match3.animation.segments.find((entry) => entry.type === "fall");
-  window.advanceTime(Math.max(0, segment.startedAt + segment.duration / 2 - app.now()));
+  app.frameNow = segment.startedAt + segment.duration / 2;
+  app.render();
 });
 textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
 assert.equal(textState.match3.animation, "fall");
 await screenshot("06d-match3-fall-animation.png");
 await page.evaluate(() => {
   const app = window.__uuHarvest.app;
+  app.scene.game.loop.wake();
   window.advanceTime(Math.max(0, app.match3.lockedUntil - app.now()) + 40);
 });
 await screenshot("06e-match3-settled.png");
@@ -461,17 +486,45 @@ const matchMilestone = await page.evaluate(() => {
     milestones: app.match3.milestones,
     rewards: app.match3.rewards,
     scoreKept: app.match3.score === score,
-    boardKept: JSON.stringify(app.match3.board) === board
+    boardChanged: JSON.stringify(app.match3.board) !== board,
+    palette: app.match3.palette,
+    animation: app.match3.animation?.type
   };
 });
 assert.equal(matchMilestone.milestones, 1);
 assert.ok(matchMilestone.rewards > 0);
 assert.equal(matchMilestone.scoreKept, true);
-assert.equal(matchMilestone.boardKept, true);
+assert.equal(matchMilestone.boardChanged, true);
+assert.equal(matchMilestone.palette.length, 7);
+assert.equal(matchMilestone.animation, "shuffle");
+
+await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  app.puzzleMode = "merge";
+  app.merge.board = [
+    [1, 1, null, null],
+    [2, 2, null, null],
+    [null, null, null, null],
+    [null, null, null, null]
+  ];
+  app.merge.animation = null;
+  app.merge.lockedUntil = 0;
+  app.render();
+});
+await screenshot("06f-merge-start.png");
+await page.evaluate(() => window.__uuHarvest.app.moveMerge("left"));
+await page.evaluate(() => window.advanceTime(140));
+await screenshot("06g-merge-animation.png");
+await page.evaluate(() => window.advanceTime(220));
+textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+assert.equal(textState.match3.mode, "merge");
+assert.ok(textState.merge.merges >= 2);
+assert.ok(textState.merge.rewardMerges >= 3);
 
 await page.evaluate(() => {
   const state = window.__uuHarvest.getState();
   state.festival = { link: false, zuma: false, match3: false };
+  state.festivalProgress = { link: 0, zuma: 0, match3: 0 };
   window.__uuHarvest.completeMini("link");
   window.__uuHarvest.completeMini("zuma");
   window.__uuHarvest.completeMini("match3");
@@ -479,6 +532,7 @@ await page.evaluate(() => {
 state = await page.evaluate(() => window.__uuHarvest.getState());
 assert.ok(state.stars >= 1);
 assert.deepEqual(state.festival, { link: false, zuma: false, match3: false });
+assert.deepEqual(state.festivalProgress, { link: 0, zuma: 0, match3: 0 });
 
 await page.evaluate(() => window.__uuHarvest.setView("market"));
 await screenshot("07-market.png");
@@ -495,9 +549,18 @@ await screenshot("09-link-small-window.png");
 await page.evaluate(() => window.__uuHarvest.setView("zuma"));
 await page.waitForTimeout(180);
 await screenshot("10-zuma-small-window.png");
-await page.evaluate(() => window.__uuHarvest.setView("match3"));
+await page.evaluate(() => {
+  window.__uuHarvest.app.puzzleMode = "match3";
+  window.__uuHarvest.setView("match3");
+});
 await page.waitForTimeout(180);
 await screenshot("11-match3-small-window.png");
+await page.evaluate(() => {
+  window.__uuHarvest.app.puzzleMode = "merge";
+  window.__uuHarvest.app.render();
+});
+await page.waitForTimeout(120);
+await screenshot("11b-merge-small-window.png");
 await page.evaluate(() => window.__uuHarvest.setView("pets"));
 await page.waitForTimeout(180);
 await screenshot("12-pet-small-window.png");

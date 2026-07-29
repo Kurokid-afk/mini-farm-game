@@ -44,16 +44,36 @@ function testLinkedRewardsAndFestival() {
     seals: state.orderSeals,
     coins: state.coins
   };
-  assert.equal(Core.claimMiniMilestone(state, "link").ok, true);
-  assert.equal(Core.claimMiniMilestone(state, "zuma").ok, true);
-  const final = Core.claimMiniMilestone(state, "match3");
+  const linkReward = Core.claimMiniMilestone(state, "link");
+  const zumaReward = Core.claimMiniMilestone(state, "zuma");
+  const matchReward = Core.claimMiniMilestone(state, "match3");
+  assert.equal(linkReward.ok, true);
+  assert.equal(zumaReward.ok, true);
+  assert.equal(matchReward.ok, true);
   assert.ok(state.seedTickets > before.tickets);
   assert.ok(state.compost > before.compost);
   assert.ok(state.orderSeals > before.seals);
-  assert.equal(final.festival.stars, 1);
+  assert.ok(matchReward.bonus);
+  assert.equal(state.miniGiftProgress, 0);
+
+  const firstGoals = { ...state.festivalGoals };
+  assert.equal(Core.advanceFestival(state, "link", firstGoals.link).completed, true);
+  assert.equal(Core.advanceFestival(state, "zuma", firstGoals.zuma).completed, true);
+  const firstFestival = Core.advanceFestival(state, "match3", firstGoals.match3).festival;
+  assert.equal(firstFestival.stars, 1);
   assert.equal(state.stars, 1);
   assert.ok(state.coins > before.coins);
   assert.deepEqual(state.festival, { link: false, zuma: false, match3: false });
+  assert.notDeepEqual(state.festivalGoals, firstGoals);
+
+  const secondGoals = { ...state.festivalGoals };
+  Core.advanceFestival(state, "link", secondGoals.link);
+  Core.advanceFestival(state, "zuma", secondGoals.zuma);
+  const secondFestival = Core.advanceFestival(state, "match3", secondGoals.match3).festival;
+  assert.equal(secondFestival.count, 2);
+  assert.equal(state.stars, 2);
+  assert.equal(state.festivalCount, 2);
+  assert.ok(Math.max(...Object.values(secondGoals)) / Math.max(...Object.values(firstGoals)) < 1.2);
 }
 
 function testBalancedCropDurations() {

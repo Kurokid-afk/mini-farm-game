@@ -8,8 +8,9 @@ import zumaFarmBackgroundUrl from "./assets/zuma-farm-bg.png?url";
 import "./game-core.js";
 
 const Core = window.UUHarvestCore;
-const WIDTH = 960;
-const HEIGHT = 640;
+const MOBILE_LAYOUT = new URLSearchParams(window.location.search).get("mobile") === "1";
+const WIDTH = MOBILE_LAYOUT ? 640 : 960;
+const HEIGHT = MOBILE_LAYOUT ? 960 : 640;
 const SAVE_KEY = "uu-harvest-collection-v1";
 
 const C = {
@@ -40,7 +41,7 @@ const GAME_NAMES = {
   farm: "农场",
   link: "连连看",
   zuma: "祖玛",
-  match3: "消消乐",
+  match3: "益智屋",
   market: "集市",
   pets: "宠物园"
 };
@@ -58,13 +59,46 @@ const LINK_SYMBOLS = [
   { name: "豌豆", background: "#e4f5e7", accent: "#3d9160" }
 ];
 
+const LINK_FLOW_MODES = [
+  { id: "down", name: "雨落田", description: "配对后向下收拢" },
+  { id: "left", name: "归仓田", description: "配对后向左归仓" },
+  { id: "center", name: "聚拢田", description: "配对后向中间靠拢" },
+  { id: "up", name: "向阳田", description: "配对后向上生长" }
+];
+
 const MATCH_TILES = [
-  { label: "萝", color: "#ee7f9a", ink: "#7d3046", shape: "round" },
-  { label: "菜", color: "#58aa68", ink: "#225f38", shape: "square" },
-  { label: "薯", color: "#c58c4f", ink: "#6f4327", shape: "hex" },
-  { label: "番", color: "#df514b", ink: "#7d292d", shape: "diamond" },
-  { label: "玉", color: "#edc84a", ink: "#705a20", shape: "capsule" },
-  { label: "莓", color: "#8b68b1", ink: "#493064", shape: "flower" }
+  { name: "萝卜", label: "萝", color: "#f06f91", ink: "#782b45", shape: "round" },
+  { name: "白菜", label: "菜", color: "#4da960", ink: "#1f5a35", shape: "square" },
+  { name: "土豆", label: "薯", color: "#b97a3e", ink: "#5d351f", shape: "hex" },
+  { name: "番茄", label: "番", color: "#df3f43", ink: "#742127", shape: "diamond" },
+  { name: "玉米", label: "玉", color: "#f0c62d", ink: "#665119", shape: "capsule" },
+  { name: "茄子", label: "茄", color: "#7650a8", ink: "#3e285d", shape: "flower" },
+  { name: "南瓜", label: "南", color: "#eb842f", ink: "#783f1f", shape: "star" },
+  { name: "蓝莓", label: "蓝", color: "#3f78c5", ink: "#203f73", shape: "drop" }
+];
+
+const MATCH_PALETTES = [
+  [0, 1, 2, 3, 4, 5, 6],
+  [1, 2, 3, 4, 5, 6, 7],
+  [0, 1, 3, 4, 5, 6, 7],
+  [0, 1, 2, 3, 5, 6, 7]
+];
+
+const MERGE_TILES = [
+  { name: "种子", label: "种", color: "#f3e2a7", ink: "#6e5a2d" },
+  { name: "嫩芽", label: "芽", color: "#b9dda0", ink: "#35673d" },
+  { name: "菜苗", label: "苗", color: "#74bf70", ink: "#245b35" },
+  { name: "鲜蔬", label: "菜", color: "#57a6b7", ink: "#244f66" },
+  { name: "菜篮", label: "篮", color: "#f0a653", ink: "#6f3d20" },
+  { name: "菜筐", label: "筐", color: "#ee796b", ink: "#743432" },
+  { name: "货车", label: "车", color: "#9c78b5", ink: "#493064" },
+  { name: "仓库", label: "仓", color: "#4d93ad", ink: "#203f55" }
+];
+
+const ZUMA_BRIDGES = [
+  { start: 0.165, end: 0.215 },
+  { start: 0.56, end: 0.61 },
+  { start: 0.82, end: 0.865 }
 ];
 
 function loadState() {
@@ -100,11 +134,17 @@ class HarvestCollection {
     this.link = null;
     this.zuma = null;
     this.match3 = null;
+    this.merge = null;
+    this.puzzleMode = "match3";
+    this.zumaPathCache = null;
     this.robotJobs = [];
     this.actionEffects = [];
     this.maturePlots = new Set();
     this.marketTab = "growth";
+    this.mobileMarketPage = 0;
     this.petShopTab = "pets";
+    this.mobilePetPage = 0;
+    this.touchStart = null;
     this.lastRobotScan = 0;
     this.frameNow = this.now();
     this.cropSheet = new Image();
@@ -145,7 +185,19 @@ class HarvestCollection {
       this.hover = { x: pointer.x, y: pointer.y };
     });
     scene.input.on("pointerdown", (pointer) => {
+      this.touchStart = { x: pointer.x, y: pointer.y, at: this.now() };
       this.handlePointer(pointer.x, pointer.y, pointer.rightButtonDown());
+    });
+    scene.input.on("pointerup", (pointer) => {
+      if (!MOBILE_LAYOUT || this.state.view !== "match3" || this.puzzleMode !== "merge" || !this.touchStart) {
+        this.touchStart = null;
+        return;
+      }
+      const dx = pointer.x - this.touchStart.x;
+      const dy = pointer.y - this.touchStart.y;
+      this.touchStart = null;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 36) return;
+      this.moveMerge(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up"));
     });
     scene.input.mouse?.disableContextMenu();
 
@@ -155,6 +207,24 @@ class HarvestCollection {
     });
     scene.input.keyboard.on("keydown-SPACE", () => {
       if (this.state.view === "zuma") this.swapZumaColor();
+    });
+    scene.input.keyboard.on("keydown", (event) => {
+      if (this.state.view !== "match3" || this.puzzleMode !== "merge") return;
+      const directions = {
+        ArrowUp: "up",
+        ArrowDown: "down",
+        ArrowLeft: "left",
+        ArrowRight: "right",
+        w: "up",
+        s: "down",
+        a: "left",
+        d: "right"
+      };
+      const direction = directions[event.key];
+      if (direction) {
+        event.preventDefault();
+        this.moveMerge(direction);
+      }
     });
 
     window.addEventListener("beforeunload", () => this.save(true));
@@ -218,6 +288,34 @@ class HarvestCollection {
     this.toast = { text, tone, startedAt, until: startedAt + duration };
   }
 
+  advanceFestival(type, amount) {
+    const result = Core.advanceFestival(this.state, type, amount);
+    if (!result.ok) return result;
+    if (result.festival) {
+      this.addActionEffect("ui-success", {
+        x: MOBILE_LAYOUT ? 500 : 800,
+        y: MOBILE_LAYOUT ? 850 : 570,
+        color: C.yellow,
+        view: this.state.view
+      }, 1100);
+      this.showToast(
+        `第 ${result.festival.count} 轮庆典完成：金币 +${result.festival.coins}、丰收星 +1`,
+        "good",
+        2800
+      );
+    } else if (result.completed) {
+      this.showToast(`${GAME_NAMES[type]}庆典目标完成，换个玩法继续集章`, "good", 1800);
+    }
+    return result;
+  }
+
+  miniGiftLabel(bonus) {
+    if (!bonus) return "";
+    if (bonus.type === "coins") return `，游园礼袋：金币 +${bonus.amount}`;
+    if (bonus.type === "sun") return `，游园礼袋：阳光 +${bonus.amount}`;
+    return "，游园礼袋：三种物资各 +1";
+  }
+
   addActionEffect(type, data = {}, duration = 700) {
     const startedAt = this.now();
     this.actionEffects.push({
@@ -271,7 +369,10 @@ class HarvestCollection {
   ensureMiniGame(view) {
     if (view === "link" && !this.link) this.startLinkRound();
     if (view === "zuma" && !this.zuma) this.startZumaRound();
-    if (view === "match3" && !this.match3) this.startMatch3Round();
+    if (view === "match3") {
+      if (!this.match3) this.startMatch3Round();
+      if (!this.merge) this.startMergeGame();
+    }
   }
 
   toggleFullscreen() {
@@ -533,22 +634,257 @@ class HarvestCollection {
     }
   }
 
-  drawFestivalStrip() {
-    const progress = ["link", "zuma", "match3"].filter((key) => this.state.festival[key]).length;
-    this.rounded(646, 550, 302, 78, 7, C.paper, C.ink, 2);
-    this.text("丰收庆典", 662, 567, 15, C.ink, "left", 900);
-    this.text(`三种玩法各达成一次里程碑 · ${progress}/3`, 662, 588, 10, C.greenDark, "left", 700);
-    ["link", "zuma", "match3"].forEach((key, index) => {
-      const x = 814 + index * 38;
-      this.circle(x, 573, 13, this.state.festival[key] ? C.yellow : C.paper2, C.ink, 2);
-      this.text(["连", "祖", "消"][index], x, 574, 10, C.ink, "center", 900);
+  drawMobileHeader() {
+    this.rounded(8, 8, 624, 104, 7, C.paper, C.ink, 3);
+    this.rect(18, 21, 42, 42, C.white, C.ink, 2);
+    this.drawCropIcon("radish", 39, 42, 0.82);
+    this.text("UU小园", 70, 29, 19, C.ink, "left", 900);
+    this.text(`农场 Lv.${this.state.level}`, 70, 55, 12, C.coral, "left", 800);
+    this.rect(70, 72, 128, 8, C.paper2);
+    this.rect(70, 72, 128 * Math.min(1, this.state.xp / Core.xpNeeded(this.state.level)), 8, C.coral);
+
+    const resources = [
+      ["coins", this.state.coins, "金币"],
+      ["tickets", this.state.seedTickets, "种券"],
+      ["compost", this.state.compost, "堆肥"],
+      ["seal", this.state.orderSeals, "印章"],
+      ["sun", this.state.sun, "阳光"],
+      ["stars", this.state.stars, "丰收星"]
+    ];
+    resources.forEach(([kind, value, label], index) => {
+      const col = index % 3;
+      const row = Math.floor(index / 3);
+      const x = 252 + col * 123;
+      const y = 34 + row * 43;
+      this.drawResourceIcon(kind, x, y);
+      this.text(label, x + 14, y - 8, 9, C.greenDark, "left", 700);
+      this.text(value, x + 14, y + 10, 13, C.ink, "left", 900);
     });
-    this.text("集齐奖励：金币 + 永久研究星", 662, 611, 10, C.inkSoft, "left", 700);
+  }
+
+  drawMobileNav() {
+    const views = ["farm", "link", "zuma", "match3", "market", "pets"];
+    this.rect(0, 888, WIDTH, 72, C.paper, C.ink, 2);
+    views.forEach((view, index) => {
+      const x = 4 + index * 106;
+      const active = this.state.view === view;
+      const petLocked = view === "pets" && !this.state.petGarden.unlocked;
+      const hit = this.addHit("nav", x, 892, 102, 64, { view });
+      if (active) this.rounded(x + 4, 896, 94, 56, 6, C.coral);
+      else if (this.isHover(hit)) this.rounded(x + 4, 896, 94, 56, 6, C.yellowSoft);
+      this.drawNavIcon(view, x + 51, 914, active);
+      this.text(
+        petLocked ? "宠物·锁" : GAME_NAMES[view],
+        x + 51,
+        942,
+        10,
+        active ? C.white : petLocked ? C.lock : C.ink,
+        "center",
+        900
+      );
+      if (["link", "zuma", "match3"].includes(view)) {
+        this.circle(x + 88, 903, 5, this.state.festival[view] ? C.yellow : C.paper2, C.ink, 1);
+      }
+    });
+  }
+
+  drawMobileTitle(title, subtitle = "") {
+    this.text(title, 18, 134, 18, C.ink, "left", 900);
+    if (subtitle) this.text(subtitle, 622, 134, 10, C.greenDark, "right", 700);
+  }
+
+  renderMobile() {
+    this.drawMobileHeader();
+    if (this.state.view === "farm") this.drawMobileFarm();
+    else if (this.state.view === "market") this.drawMobileMarket();
+    else if (this.state.view === "pets") this.drawMobilePetGarden();
+    else if (this.state.view === "link") this.drawMobileLink();
+    else if (this.state.view === "zuma") this.drawMobileZuma();
+    else if (this.state.view === "match3") {
+      if (this.puzzleMode === "merge") this.drawMobileMerge();
+      else this.drawMobileMatch3();
+    }
+    this.drawMobileNav();
+  }
+
+  drawMobileOrders() {
+    this.state.orders.forEach((order, index) => {
+      const crop = Core.cropById(order.cropId);
+      const x = 18 + index * 207;
+      const y = 154;
+      const ready = this.state.produce[crop.id] >= order.amount;
+      this.rounded(x, y, 197, 74, 6, index % 2 ? C.cream : C.paper, C.ink, 2);
+      this.drawCropIcon(crop.id, x + 26, y + 38, 0.62);
+      this.text(`${crop.name} ×${order.amount}`, x + 50, y + 20, 11, C.ink, "left", 900);
+      this.text(`￥${order.coins}`, x + 50, y + 46, 12, C.coralDark, "left", 900);
+      this.button(
+        ready ? "交付" : `${this.state.produce[crop.id]}/${order.amount}`,
+        x + 139,
+        y + 34,
+        50,
+        32,
+        "deliver",
+        { orderId: order.id },
+        { fill: ready ? C.greenSoft : C.paper2, disabled: !ready, size: 10 }
+      );
+    });
+  }
+
+  drawMobilePlots() {
+    for (let index = 0; index < Core.PLOT_COUNT; index += 1) {
+      const bounds = this.plotBounds(index);
+      const { x, y, w, h } = bounds;
+      const unlocked = index < this.state.unlockedPlots;
+      const plot = this.state.plots[index];
+      this.addHit("plot", x, y, w, h, { index });
+      this.rounded(
+        x,
+        y,
+        w,
+        h,
+        5,
+        unlocked ? C.soil : index === this.state.unlockedPlots ? C.greenSoft : "#90aa8b",
+        C.ink,
+        2
+      );
+      if (!unlocked) {
+        this.text(index === this.state.unlockedPlots ? `解锁 ￥${Core.nextLandCost(this.state)}` : "未解锁", x + w / 2, y + h / 2, 10, C.ink, "center", 800);
+        continue;
+      }
+      this.line(x + 10, y + 29, x + w - 10, y + 29, C.soilDark, 3);
+      this.line(x + 10, y + 57, x + w - 10, y + 57, C.soilDark, 3);
+      for (let soil = 0; soil < plot.soil; soil += 1) this.circle(x + 11 + soil * 10, y + 11, 3, C.yellow, C.ink, 1);
+      if (!plot.crop) {
+        this.text("空土地", x + w / 2, y + 45, 10, "rgba(255,248,216,0.75)", "center", 700);
+        continue;
+      }
+      const crop = Core.cropById(plot.crop.cropId);
+      const progress = Core.cropProgress(plot, this.frameNow);
+      const pulse = progress >= 1 ? 1 + Math.sin(this.frameNow / 180 + index) * 0.05 : 1;
+      this.ctx.save();
+      this.ctx.translate(x + w / 2, y + 43);
+      this.ctx.rotate(Math.sin(this.frameNow / 560 + index) * 0.025);
+      this.ctx.scale(pulse, pulse);
+      this.drawCropIcon(crop.id, 0, 0, 0.95 + progress * 0.2);
+      this.ctx.restore();
+      if (plot.crop.watered) this.drawWaterDrop(x + w - 13, y + 14, 4, 0.9);
+      if (plot.crop.fertilized) this.drawSpark(x + 15, y + 17, 3, C.yellow, 0.85);
+      this.rect(x + 24, y + h - 11, w - 48, 6, C.paper2);
+      this.rect(x + 24, y + h - 11, (w - 48) * progress, 6, progress >= 1 ? C.yellow : C.green);
+      this.text(progress >= 1 ? "成熟" : Core.formatDuration(plot.crop.finishAt - this.frameNow), x + w / 2, y + h - 22, 9, C.paper, "center", 800);
+    }
+    this.drawAutomationRobots();
+  }
+
+  drawMobileFarmTools() {
+    const tools = [
+      ["seed", "种植"],
+      ["water", "浇水"],
+      ["fertilizer", `施肥 ${this.state.compost}`],
+      ["hand", "收获"],
+      ["soil", `沃土 ${this.state.inventory.soilKit}`]
+    ];
+    tools.forEach(([type, label], index) => {
+      this.button(label, 18 + index * 121, 617, 111, 44, "tool", { tool: type }, {
+        fill: this.state.selected.type === type ? C.yellow : C.cream,
+        size: 10
+      });
+    });
+  }
+
+  drawMobileSeedShelf() {
+    Core.CROPS.forEach((crop, index) => {
+      const x = 18 + index * 101;
+      const locked = crop.level > this.state.level;
+      const selected = this.state.selected.type === "seed" && this.state.selected.id === crop.id;
+      const hit = this.addHit("seed-select", x, 670, 93, 67, { cropId: crop.id });
+      this.rounded(x, 670, 93, 67, 5, selected ? C.yellowSoft : index % 2 ? C.cream : C.paper, C.ink, selected ? 3 : 1);
+      this.drawCropIcon(crop.id, x + 24, 693, 0.58);
+      this.text(crop.name, x + 49, 687, 10, locked ? C.lock : C.ink, "left", 900);
+      this.text(locked ? `Lv.${crop.level}` : `种 ${this.state.seeds[crop.id]}`, x + 49, 710, 9, locked ? C.lock : C.greenDark, "left", 800);
+      if (locked) hit.disabled = true;
+    });
+    const selectedCrop = Core.cropById(this.state.selected.id) || Core.CROPS[0];
+    this.button(`补种 ${selectedCrop.name} ×3 · ￥${selectedCrop.seedPrice * 3}`, 18, 746, 230, 42, "seed-buy", { cropId: selectedCrop.id }, {
+      disabled: selectedCrop.level > this.state.level,
+      fill: C.yellowSoft,
+      size: 11
+    });
+    [
+      ["sprinkler", "自动浇水"],
+      ["harvester", "自动收菜"]
+    ].forEach(([type, label], index) => {
+      const enabled = this.state.automationEnabled[type];
+      this.button(`${label} ${enabled ? "开" : "关"}`, 258 + index * 181, 746, 171, 42, "auto-toggle", { itemId: type }, {
+        fill: enabled ? C.greenSoft : C.paper2,
+        color: enabled ? C.greenDark : C.lock,
+        size: 10
+      });
+    });
+  }
+
+  drawMobileFarmFooter() {
+    const count = Core.availableProduce(this.state);
+    const value = Math.floor(Core.produceValue(this.state));
+    this.rounded(18, 797, 294, 80, 6, C.paper, C.ink, 2);
+    this.text(`仓库 ${count} 份 · ￥${value}`, 32, 819, 12, C.ink, "left", 900);
+    this.button("全部出售", 174, 832, 124, 34, "sell", {}, {
+      fill: value ? C.greenSoft : C.paper2,
+      disabled: !value,
+      size: 10
+    });
+    this.rounded(322, 797, 300, 80, 6, C.cream, C.ink, 2);
+    this.text(`庆典 · 第 ${this.state.festivalCount + 1} 轮`, 338, 818, 12, C.ink, "left", 900);
+    const progress = ["link", "zuma", "match3"].map((key, index) => (
+      `${["连", "祖", "益"][index]} ${this.state.festival[key] ? "完成" : `${this.state.festivalProgress[key]}/${this.state.festivalGoals[key]}`}`
+    )).join("  ");
+    this.text(progress, 338, 843, 9, C.greenDark, "left", 800);
+    this.text(`游园礼袋 ${this.state.miniGiftProgress}/3`, 338, 864, 9, C.coralDark, "left", 800);
+  }
+
+  drawMobileFarm() {
+    this.drawMobileTitle("农场", "订单、种植和自动化");
+    this.drawMobileOrders();
+    this.drawMobilePlots();
+    this.drawMobileFarmTools();
+    this.drawMobileSeedShelf();
+    this.drawMobileFarmFooter();
+  }
+
+  drawFestivalStrip() {
+    this.rounded(646, 550, 302, 78, 7, C.paper, C.ink, 2);
+    this.text(`丰收庆典 · 第 ${this.state.festivalCount + 1} 轮`, 662, 566, 14, C.ink, "left", 900);
+    this.text("可反复完成 · 每轮目标不同", 932, 566, 9, C.greenDark, "right", 700);
+    ["link", "zuma", "match3"].forEach((key, index) => {
+      const x = 664 + index * 92;
+      const done = this.state.festival[key];
+      const progress = this.state.festivalProgress[key];
+      const goal = this.state.festivalGoals[key];
+      this.rounded(x, 580, 84, 21, 4, done ? C.greenSoft : C.paper2, C.ink, 1);
+      this.text(
+        `${["连", "祖", "益"][index]} ${done ? "完成" : `${progress}/${goal}`}`,
+        x + 42,
+        591,
+        9,
+        done ? C.greenDark : C.ink,
+        "center",
+        900
+      );
+    });
+    const previewCoins = 140 + this.state.level * 25 + this.state.festivalCount * 15;
+    this.text(`本轮奖励：金币 ${previewCoins} + 永久研究星 1`, 662, 614, 9, C.inkSoft, "left", 700);
   }
 
   render() {
     this.hits = [];
     this.drawBackground();
+    if (MOBILE_LAYOUT) {
+      this.renderMobile();
+      this.drawActionEffects();
+      if (this.toast) this.drawToast();
+      this.surface.refresh();
+      return;
+    }
     this.drawHeader();
     this.drawNav();
     if (this.state.view === "farm") this.drawFarm();
@@ -556,7 +892,10 @@ class HarvestCollection {
     else if (this.state.view === "pets") this.drawPetGarden();
     else if (this.state.view === "link") this.drawLink();
     else if (this.state.view === "zuma") this.drawZuma();
-    else if (this.state.view === "match3") this.drawMatch3();
+    else if (this.state.view === "match3") {
+      if (this.puzzleMode === "merge") this.drawMergeGame();
+      else this.drawMatch3();
+    }
     this.drawActionEffects();
     if (this.toast) this.drawToast();
     this.surface.refresh();
@@ -566,11 +905,12 @@ class HarvestCollection {
     const enter = easeOut((this.frameNow - this.toast.startedAt) / 150);
     const leave = clamp01((this.toast.until - this.frameNow) / 180);
     const alpha = Math.min(enter, leave);
-    const width = Math.min(350, Math.max(210, 42 + this.toast.text.length * 11));
+    const width = Math.min(MOBILE_LAYOUT ? 590 : 350, Math.max(210, 42 + this.toast.text.length * 11));
     const fill = this.toast.tone === "good" ? C.greenSoft : this.toast.tone === "bad" ? "#f2b1aa" : C.yellowSoft;
     this.ctx.save();
     this.ctx.globalAlpha = alpha;
-    this.ctx.translate(940 - width / 2, 149);
+    const rightEdge = MOBILE_LAYOUT ? 630 : this.state.view === "match3" ? 708 : 940;
+    this.ctx.translate(rightEdge - width / 2, MOBILE_LAYOUT ? 858 : 149);
     this.ctx.scale(0.94 + enter * 0.06, 0.94 + enter * 0.06);
     this.rounded(-width / 2, -14, width, 28, 6, fill, C.ink, 2);
     this.text(this.toast.text, 0, 1, 10, C.ink, "center", 800);
@@ -603,13 +943,20 @@ class HarvestCollection {
   }
 
   drawActionEffects() {
-    const headerX = {
-      coins: 305,
-      seedTickets: 397,
-      compost: 489,
-      orderSeals: 581,
-      sun: 673,
-      stars: 765
+    const headerTargets = MOBILE_LAYOUT ? {
+      coins: { x: 252, y: 34 },
+      seedTickets: { x: 375, y: 34 },
+      compost: { x: 498, y: 34 },
+      orderSeals: { x: 252, y: 77 },
+      sun: { x: 375, y: 77 },
+      stars: { x: 498, y: 77 }
+    } : {
+      coins: { x: 305, y: 35 },
+      seedTickets: { x: 397, y: 35 },
+      compost: { x: 489, y: 35 },
+      orderSeals: { x: 581, y: 35 },
+      sun: { x: 673, y: 35 },
+      stars: { x: 765, y: 35 }
     };
     for (const effect of this.actionEffects) {
       if (effect.view && effect.view !== this.state.view) continue;
@@ -622,17 +969,25 @@ class HarvestCollection {
         this.ctx.globalAlpha = Math.sin(progress * Math.PI) * 0.16;
         this.ctx.fillStyle = C.white;
         this.ctx.transform(1, 0, -0.32, 1, 0, 0);
-        this.ctx.fillRect(sweepX, 128, 115, HEIGHT - 128);
+        this.ctx.fillRect(sweepX, MOBILE_LAYOUT ? 112 : 128, 115, HEIGHT - (MOBILE_LAYOUT ? 112 : 128));
         this.ctx.restore();
         continue;
       }
 
       if (effect.type === "resource") {
-        const x = headerX[effect.kind] || 305;
+        const target = headerTargets[effect.kind] || headerTargets.coins;
         const color = effect.delta > 0 ? C.greenDark : C.coralDark;
         this.ctx.save();
         this.ctx.globalAlpha = fade;
-        this.text(`${effect.delta > 0 ? "+" : ""}${effect.delta}`, x + 28, 58 - progress * 20, 12 + Math.sin(progress * Math.PI) * 3, color, "center", 900);
+        this.text(
+          `${effect.delta > 0 ? "+" : ""}${effect.delta}`,
+          target.x + 27,
+          target.y + 23 - progress * 20,
+          12 + Math.sin(progress * Math.PI) * 3,
+          color,
+          "center",
+          900
+        );
         this.ctx.restore();
         continue;
       }
@@ -713,8 +1068,8 @@ class HarvestCollection {
             );
           }
         } else if (effect.type === "plot-harvest") {
-          const targetX = 690;
-          const targetY = 486;
+          const targetX = MOBILE_LAYOUT ? 150 : 690;
+          const targetY = MOBILE_LAYOUT ? 818 : 486;
           const fly = easeInOut(progress);
           const arc = Math.sin(progress * Math.PI) * 60;
           const x = centerX + (targetX - centerX) * fly;
@@ -776,11 +1131,12 @@ class HarvestCollection {
       }
 
       if (effect.type === "order-deliver") {
-        const startX = 18 + effect.orderIndex * 205 + 98;
-        const startY = 193;
+        const startX = MOBILE_LAYOUT ? 18 + effect.orderIndex * 207 + 98 : 18 + effect.orderIndex * 205 + 98;
+        const startY = MOBILE_LAYOUT ? 191 : 193;
+        const coinTarget = headerTargets.coins;
         const fly = easeInOut(progress);
-        const x = startX + (305 - startX) * fly;
-        const y = startY + (40 - startY) * fly - Math.sin(progress * Math.PI) * 35;
+        const x = startX + (coinTarget.x - startX) * fly;
+        const y = startY + (coinTarget.y - startY) * fly - Math.sin(progress * Math.PI) * 35;
         this.ctx.save();
         this.ctx.translate(x, y);
         this.ctx.rotate(progress * 0.4);
@@ -789,7 +1145,7 @@ class HarvestCollection {
         this.ctx.restore();
         for (let coin = 0; coin < 6; coin += 1) {
           const angle = coin * Math.PI / 3;
-          this.circle(305 + Math.cos(angle) * progress * 25, 39 + Math.sin(angle) * progress * 18, 3, C.yellow, C.ink, 1);
+          this.circle(coinTarget.x + Math.cos(angle) * progress * 25, coinTarget.y + Math.sin(angle) * progress * 18, 3, C.yellow, C.ink, 1);
         }
         continue;
       }
@@ -797,14 +1153,15 @@ class HarvestCollection {
       if (effect.type === "warehouse-sell") {
         for (let item = 0; item < 7; item += 1) {
           const local = clamp01(progress * 1.35 - item * 0.06);
-          const startX = 700 + item * 18;
-          const x = startX + (305 - startX) * easeInOut(local);
-          const y = 495 + (40 - 495) * easeInOut(local) - Math.sin(local * Math.PI) * (35 + item * 5);
+          const startX = (MOBILE_LAYOUT ? 55 : 700) + item * 18;
+          const startY = MOBILE_LAYOUT ? 835 : 495;
+          const x = startX + (headerTargets.coins.x - startX) * easeInOut(local);
+          const y = startY + (headerTargets.coins.y - startY) * easeInOut(local) - Math.sin(local * Math.PI) * (35 + item * 5);
           this.circle(x, y, 5, item % 2 ? C.green : C.yellow, C.ink, 1);
         }
         this.ctx.save();
         this.ctx.globalAlpha = fade;
-        this.text(`+￥${effect.value}`, 760, 466 - progress * 28, 16, C.greenDark, "center", 900);
+        this.text(`+￥${effect.value}`, MOBILE_LAYOUT ? 150 : 760, (MOBILE_LAYOUT ? 808 : 466) - progress * 28, 16, C.greenDark, "center", 900);
         this.ctx.restore();
         continue;
       }
@@ -829,7 +1186,10 @@ class HarvestCollection {
         if (effect.action === "feed") {
           for (let bit = 0; bit < 6; bit += 1) {
             const local = clamp01(progress * 1.4 - bit * 0.08);
-            this.circle(180 + bit * 8 + (centerX - 210 - bit * 8) * local, 470 + (centerY - 470) * local - Math.sin(local * Math.PI) * 40, 4, C.soil, C.ink, 1);
+            const feedX = MOBILE_LAYOUT ? 150 : 180;
+            const feedTargetX = MOBILE_LAYOUT ? 180 : 210;
+            const feedY = MOBILE_LAYOUT ? 490 : 470;
+            this.circle(feedX + bit * 8 + (centerX - feedTargetX - bit * 8) * local, feedY + (centerY - feedY) * local - Math.sin(local * Math.PI) * 40, 4, C.soil, C.ink, 1);
           }
         } else if (effect.action === "pet") {
           for (let heart = 0; heart < 7; heart += 1) {
@@ -969,6 +1329,17 @@ class HarvestCollection {
   }
 
   plotBounds(index) {
+    if (MOBILE_LAYOUT) {
+      const w = 195;
+      const h = 82;
+      const gap = 8;
+      return {
+        x: 18 + (index % 3) * (w + gap),
+        y: 238 + Math.floor(index / 3) * (h + gap),
+        w,
+        h
+      };
+    }
     const w = 143;
     const h = 82;
     const gap = 10;
@@ -1407,6 +1778,42 @@ class HarvestCollection {
   petActorPosition(petId) {
     const index = Math.max(0, Core.PET_TYPES.findIndex((pet) => pet.id === petId));
     const phase = this.frameNow / 5200;
+    if (MOBILE_LAYOUT) {
+      const routes = {
+        dog: { x: 310 + Math.sin(phase * 1.25) * 150, y: 390 + Math.sin(phase * 2.1) * 48, facing: Math.cos(phase * 1.25) >= 0 ? 1 : -1, pace: 1.2 },
+        cat: { x: 410 + Math.sin(phase * 0.52 + 1.4) * 92, y: 335 + Math.sin(phase * 0.8 + 0.5) * 35, facing: Math.cos(phase * 0.52 + 1.4) >= 0 ? 1 : -1, pace: 0.55 },
+        rabbit: { x: 315 + Math.sin(phase * 1.8 + 2.2) * 115, y: 485 + Math.sin(phase * 1.1) * 22, facing: Math.cos(phase * 1.8 + 2.2) >= 0 ? 1 : -1, pace: 1.8 },
+        chick: { x: 125 + Math.cos(phase * 1.35) * 58, y: 335 + Math.sin(phase * 1.35) * 42, facing: -Math.sin(phase * 1.35) >= 0 ? 1 : -1, pace: 1.35 }
+      };
+      const route = routes[petId] || routes.dog;
+      const behaviorCycle = (this.frameNow / ({ dog: 7200, cat: 9800, rabbit: 6200, chick: 5600 }[petId] || 7200) + index * 0.19) % 1;
+      const action = behaviorCycle > ({ dog: 0.9, cat: 0.7, rabbit: 0.91, chick: 0.86 }[petId] || 0.88)
+        ? "sleep"
+        : behaviorCycle < ({ dog: 0.7, cat: 0.34, rabbit: 0.58, chick: 0.74 }[petId] || 0.6) ? "walk" : "idle";
+      const effect = [...this.actionEffects].reverse().find((entry) => entry.type === "pet-action" && entry.petId === petId && entry.until >= this.frameNow);
+      if (!effect) return { ...route, walking: action === "walk", action, step: Math.sin(this.frameNow / (155 / route.pace) + index) };
+      const targets = {
+        feed: { x: 180, y: 495 },
+        play: { x: 315, y: 510 },
+        bathe: { x: 520, y: 475 },
+        groom: { x: 545, y: 330 },
+        pet: route
+      };
+      const progress = this.effectProgress(effect);
+      const travel = Math.sin(progress * Math.PI);
+      const target = targets[effect.action] || route;
+      const effectAction = progress < 0.24 || progress > 0.76
+        ? "walk"
+        : ({ feed: "feed", play: "play", bathe: "care", groom: "care", pet: "idle" }[effect.action] || "idle");
+      return {
+        x: route.x + (target.x - route.x) * travel,
+        y: route.y + (target.y - route.y) * travel,
+        walking: effectAction === "walk",
+        action: effectAction,
+        facing: target.x >= route.x ? 1 : -1,
+        step: Math.sin(progress * Math.PI * 8)
+      };
+    }
     const routes = {
       dog: {
         x: 335 + Math.sin(phase * 1.25) * 135,
@@ -1829,6 +2236,110 @@ class HarvestCollection {
     });
   }
 
+  drawMobileMarketItem(item, index, x, y) {
+    const level = Core.itemLevel(this.state, item);
+    const maxed = level >= item.max;
+    const cost = Core.itemCost(this.state, item);
+    this.rounded(x, y, 294, 148, 7, index % 2 ? C.cream : C.paper, C.ink, 2);
+    this.drawShopIcon(item.id, x + 258, y + 30, 0.92);
+    this.text(item.name, x + 14, y + 22, 13, C.ink, "left", 900);
+    const status = item.kind === "consumable"
+      ? `持有 ${level}`
+      : item.kind === "automation"
+        ? `已购 ${level}/${item.max} · 空闲 ${Core.unplacedAutomation(this.state, item.id)}`
+        : `Lv.${level}/${item.max}`;
+    this.text(status, x + 14, y + 51, 10, C.greenDark, "left", 800);
+    this.text(item.description, x + 14, y + 78, 9, C.inkSoft, "left", 700);
+    if (item.kind === "automation" && level > 0) {
+      this.button("布置", x + 14, y + 102, 104, 36, "place-auto", { itemId: item.id }, { fill: C.mint, size: 10 });
+      this.button(maxed ? "已满" : `再买 ￥${cost}`, x + 128, y + 102, 152, 36, "buy-shop", { itemId: item.id }, {
+        disabled: maxed,
+        fill: C.yellowSoft,
+        size: 10
+      });
+    } else {
+      this.button(maxed ? "已拥有" : `购买 ￥${cost}`, x + 128, y + 102, 152, 36, "buy-shop", { itemId: item.id }, {
+        disabled: maxed,
+        fill: C.yellowSoft,
+        size: 10
+      });
+    }
+  }
+
+  drawMobileMarket() {
+    this.drawMobileTitle("经营集市", "升级、自动化、装饰");
+    [
+      ["growth", "效率升级"],
+      ["automation", "自动化"],
+      ["decor", "农场装饰"]
+    ].forEach(([tab, label], index) => {
+      this.button(label, 18 + index * 204, 151, 192, 40, "market-tab", { tab }, {
+        fill: this.marketTab === tab ? C.coral : C.paper,
+        color: this.marketTab === tab ? C.white : C.ink,
+        size: 11
+      });
+    });
+    const allItems = this.marketItemsForTab();
+    const pageCount = Math.max(1, Math.ceil(allItems.length / 4));
+    this.mobileMarketPage = Math.min(this.mobileMarketPage, pageCount - 1);
+    allItems.slice(this.mobileMarketPage * 4, this.mobileMarketPage * 4 + 4).forEach((item, index) => {
+      this.drawMobileMarketItem(item, index, 18 + (index % 2) * 310, 201 + Math.floor(index / 2) * 157);
+    });
+    if (pageCount > 1) {
+      this.button("‹", 236, 510, 60, 36, "mobile-page", { target: "market", delta: -1 }, {
+        disabled: this.mobileMarketPage === 0,
+        size: 18
+      });
+      this.text(`${this.mobileMarketPage + 1} / ${pageCount}`, 320, 528, 11, C.ink, "center", 900);
+      this.button("›", 344, 510, 60, 36, "mobile-page", { target: "market", delta: 1 }, {
+        disabled: this.mobileMarketPage >= pageCount - 1,
+        size: 18
+      });
+    }
+
+    this.rounded(18, 556, 604, 68, 7, C.paper, C.ink, 2);
+    this.drawPetPortrait("dog", 54, 590, 54);
+    this.text("暖阳宠物园", 90, 577, 13, C.ink, "left", 900);
+    this.text(this.state.petGarden.unlocked ? "已解锁 · 农作物供给宠物园" : `地契 ￥${Core.PET_GARDEN_COST}`, 90, 606, 9, C.greenDark, "left", 700);
+    this.button(this.state.petGarden.unlocked ? "进入" : "解锁", 500, 571, 108, 40, this.state.petGarden.unlocked ? "nav" : "unlock-pets", {
+      view: "pets"
+    }, { fill: C.coral, color: C.white, size: 11 });
+
+    this.rounded(18, 634, 294, 68, 6, C.cream, C.ink, 2);
+    this.text("种子券兑换", 32, 655, 12, C.ink, "left", 900);
+    this.text(`持有 ${this.state.seedTickets} 张`, 32, 683, 9, C.greenDark, "left", 800);
+    this.button("兑换", 211, 648, 87, 40, "exchange", {}, {
+      disabled: this.state.seedTickets < 1,
+      fill: C.greenSoft,
+      size: 10
+    });
+
+    const landCost = Core.nextLandCost(this.state);
+    this.rounded(328, 634, 294, 68, 6, C.paper, C.ink, 2);
+    this.text("农田扩建", 342, 655, 12, C.ink, "left", 900);
+    this.text(`${this.state.unlockedPlots}/${Core.PLOT_COUNT} 块`, 342, 683, 9, C.greenDark, "left", 800);
+    this.button(landCost == null ? "已满" : `￥${landCost}`, 515, 648, 93, 40, "unlock-land", {}, {
+      disabled: landCost == null,
+      fill: C.greenSoft,
+      size: 10
+    });
+
+    this.text(`丰收研究 · ★${this.state.stars}`, 18, 723, 13, C.ink, "left", 900);
+    Core.RESEARCH.forEach((entry, index) => {
+      const y = 741 + index * 45;
+      const level = this.state.research[entry.id];
+      const cost = Core.researchCost(this.state, entry.id);
+      this.rounded(18, y, 604, 39, 5, index % 2 ? C.cream : C.paper, C.ink, 1);
+      this.text(`${entry.name} Lv.${level}`, 32, y + 20, 10, C.ink, "left", 900);
+      this.text(entry.description, 183, y + 20, 9, C.greenDark, "left", 700);
+      this.button(cost == null ? "完成" : `★${cost}`, 546, y + 4, 64, 31, "research", { researchId: entry.id }, {
+        disabled: cost == null,
+        fill: C.yellowSoft,
+        size: 9
+      });
+    });
+  }
+
   drawPetFacilityIcon(icon, x, y, scale = 1) {
     const facilityIndex = {
       food: 0,
@@ -2241,7 +2752,210 @@ class HarvestCollection {
     this.drawPetShop();
   }
 
-  startLinkRound() {
+  drawMobilePetScene() {
+    const garden = this.state.petGarden;
+    const selectedType = Core.petType(garden.selectedPet);
+    const selected = garden.pets[garden.selectedPet];
+    this.rounded(18, 153, 604, 51, 6, C.paper, C.ink, 2);
+    if (selected?.owned) {
+      this.drawPetPortrait(garden.selectedPet, 47, 179, 44);
+      this.text(`${selectedType.name} · ${Core.petMood(selected)}`, 76, 169, 11, C.ink, "left", 900);
+      this.text(
+        `饱 ${Math.round(selected.hunger)}  乐 ${Math.round(selected.happiness)}  净 ${Math.round(selected.cleanliness)}`,
+        76,
+        190,
+        9,
+        C.greenDark,
+        "left",
+        800
+      );
+    } else {
+      this.text("领养后，这里会显示宠物状态", 34, 179, 11, C.inkSoft, "left", 800);
+    }
+    this.text(`口粮 ${garden.food} · 仓库蔬菜 ${Core.availableProduce(this.state)}`, 397, 169, 9, C.greenDark, "center", 800);
+    this.button(`领取 ￥${garden.visitorCoins}`, 500, 163, 108, 32, "pet-claim", {}, {
+      disabled: garden.visitorCoins < 1,
+      fill: C.yellowSoft,
+      size: 9
+    });
+
+    this.rounded(18, 212, 604, 337, 7, C.paper2, C.ink, 2);
+    if (this.petGardenBackground.complete && this.petGardenBackground.naturalWidth) {
+      const sw = this.petGardenBackground.naturalWidth;
+      const sh = Math.min(this.petGardenBackground.naturalHeight, Math.round(sw / (600 / 333)));
+      const sy = Math.max(0, Math.round((this.petGardenBackground.naturalHeight - sh) / 2));
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.roundRect(20, 214, 600, 333, 5);
+      this.ctx.clip();
+      this.ctx.imageSmoothingEnabled = false;
+      this.ctx.drawImage(this.petGardenBackground, 0, sy, sw, sh, 20, 214, 600, 333);
+      this.ctx.restore();
+    } else {
+      this.rect(20, 214, 600, 333, "#8fc36d");
+    }
+
+    const facilities = garden.facilities;
+    this.drawPetFacilityIcon("food", 180, 500, 0.62);
+    if (facilities.flowerArch) this.drawPetFacilityIcon("flower", 310, 266, 0.7);
+    if (facilities.kennel) this.drawPetFacilityIcon("kennel", 74, 475, 0.84);
+    if (facilities.pond) this.drawPetFacilityIcon("pond", 535, 468, 0.88);
+    if (facilities.autoFeeder) {
+      this.drawPetFacilityIcon("feeder", 540, 273, 0.7);
+      const drop = (this.frameNow / 900) % 1;
+      this.circle(540, 280 + drop * 15, 2, C.soil, C.ink, 1);
+    }
+    if (facilities.toyBox) this.drawPetFacilityIcon("toy", 315, 509, 0.62);
+    if (facilities.grooming) this.drawPetFacilityIcon("groom", 555, 345, 0.66);
+    if (facilities.nightLamp) this.drawPetFacilityIcon("lamp", 585, 410, 0.62);
+    if (facilities.picnic) this.drawPetFacilityIcon("picnic", 108, 345, 0.7);
+    if (facilities.birdBath) this.drawPetFacilityIcon("birdbath", 57, 276, 0.66);
+    if (facilities.pebblePath) {
+      const stones = Math.min(13, 4 + facilities.pebblePath * 3);
+      for (let index = 0; index < stones; index += 1) {
+        const ratio = index / Math.max(1, stones - 1);
+        this.ctx.beginPath();
+        this.ctx.ellipse(220 + ratio * 250, 520 + Math.sin(index * 1.7) * 7, 8, 5, index % 2 ? 0.2 : -0.2, 0, Math.PI * 2);
+        this.ctx.fillStyle = [C.coral, C.sky, C.yellow, C.greenSoft][index % 4];
+        this.ctx.fill();
+        this.ctx.strokeStyle = C.ink;
+        this.ctx.lineWidth = 1;
+        this.ctx.stroke();
+      }
+    }
+    if (facilities.musicBox) this.drawPetFacilityIcon("music", 450, 510, 0.62);
+
+    const actors = Core.PET_TYPES
+      .filter((type) => garden.pets[type.id].owned)
+      .map((type) => ({ type, position: this.petActorPosition(type.id) }))
+      .sort((a, b) => a.position.y - b.position.y);
+    actors.forEach(({ type, position }) => {
+      this.drawPixelPetActor(type.id, position.x, position.y, { dog: 57, cat: 53, rabbit: 55, chick: 43 }[type.id], {
+        selected: garden.selectedPet === type.id,
+        walking: position.walking,
+        action: position.action,
+        facing: position.facing,
+        step: position.step
+      });
+    });
+    if (!actors.length) {
+      this.rounded(190, 330, 260, 68, 6, C.paper, C.ink, 2);
+      this.text("从下方商店领养第一只宠物", 320, 355, 12, C.ink, "center", 900);
+      this.text("动物会在草地上自由活动", 320, 380, 9, C.greenDark, "center", 700);
+    }
+
+    const petOwned = Boolean(selected?.owned);
+    const activeAction = [...this.actionEffects].reverse().find((effect) => (
+      effect.type === "pet-action" && effect.petId === garden.selectedPet && effect.until >= this.frameNow
+    ));
+    [
+      ["feed", "喂食", true],
+      ["pet", "抚摸", true],
+      ["play", "玩耍", true],
+      ["bathe", facilities.pond ? "洗澡" : "需水池", Boolean(facilities.pond)],
+      ["groom", facilities.grooming ? "梳毛" : "需护理", Boolean(facilities.grooming)]
+    ].forEach(([action, label, available], index) => {
+      this.button(label, 18 + index * 121, 557, 111, 43, "pet-action", { action }, {
+        disabled: !petOwned || !available || Boolean(activeAction),
+        fill: available ? C.cream : C.paper2,
+        size: 10
+      });
+    });
+  }
+
+  mobilePetShopItems() {
+    if (this.petShopTab === "pets") return Core.PET_TYPES;
+    return this.petShopTab === "decor"
+      ? Core.PET_FACILITIES.filter((item) => item.kind === "decoration")
+      : Core.PET_FACILITIES.filter((item) => item.kind !== "decoration");
+  }
+
+  drawMobilePetShopItem(item, index, y) {
+    const garden = this.state.petGarden;
+    this.rounded(18, y, 604, 55, 5, index % 2 ? C.cream : C.paper, C.ink, 1);
+    if (this.petShopTab === "pets") {
+      const entry = garden.pets[item.id];
+      const locked = this.state.level < item.level;
+      const active = garden.selectedPet === item.id;
+      this.drawPetPortrait(item.id, 49, y + 28, 46, { alpha: locked ? 0.4 : 1 });
+      this.text(item.name, 80, y + 18, 11, locked ? C.lock : C.ink, "left", 900);
+      this.text(
+        entry.owned ? `饱 ${Math.round(entry.hunger)} · 乐 ${Math.round(entry.happiness)} · 净 ${Math.round(entry.cleanliness)}` : locked ? `农场 Lv.${item.level} 解锁` : item.description,
+        80,
+        y + 40,
+        9,
+        locked ? C.lock : C.greenDark,
+        "left",
+        700
+      );
+      this.button(
+        entry.owned ? (active ? "当前" : "查看") : `￥${item.cost}`,
+        520,
+        y + 10,
+        88,
+        36,
+        entry.owned ? "pet-select" : "pet-buy",
+        { petId: item.id },
+        { disabled: locked || (entry.owned && active), fill: entry.owned ? C.greenSoft : C.yellowSoft, size: 9 }
+      );
+      return;
+    }
+    const level = item.kind === "consumable" ? garden.food : garden.facilities[item.id];
+    const maxed = item.kind !== "consumable" && level >= item.max;
+    const cost = Core.petFacilityCost(this.state, item.id);
+    this.drawPetFacilityIcon(item.icon, 49, y + 28, 0.62);
+    this.text(item.name, 80, y + 18, 11, C.ink, "left", 900);
+    this.text(
+      item.kind === "consumable" ? `用农场蔬菜加工 · 现有口粮 ${garden.food}` : `${item.description} · ${level}/${item.max}`,
+      80,
+      y + 40,
+      9,
+      C.greenDark,
+      "left",
+      700
+    );
+    this.button(maxed ? "已满" : `￥${cost}`, 520, y + 10, 88, 36, "pet-facility-buy", { itemId: item.id }, {
+      disabled: maxed,
+      fill: C.yellowSoft,
+      size: 9
+    });
+  }
+
+  drawMobilePetGarden() {
+    Core.syncPetGarden(this.state, this.frameNow);
+    this.drawMobileTitle("暖阳宠物园", "农场供给，宠物回流收益");
+    this.drawMobilePetScene();
+    [
+      ["pets", "领养"],
+      ["facilities", "设施"],
+      ["decor", "装饰"]
+    ].forEach(([tab, label], index) => {
+      this.button(label, 18 + index * 204, 611, 192, 38, "pet-tab", { tab }, {
+        fill: this.petShopTab === tab ? C.coral : C.paper,
+        color: this.petShopTab === tab ? C.white : C.ink,
+        size: 10
+      });
+    });
+    const allItems = this.mobilePetShopItems();
+    const pageCount = Math.max(1, Math.ceil(allItems.length / 3));
+    this.mobilePetPage = Math.min(this.mobilePetPage, pageCount - 1);
+    allItems.slice(this.mobilePetPage * 3, this.mobilePetPage * 3 + 3).forEach((item, index) => {
+      this.drawMobilePetShopItem(item, index, 658 + index * 60);
+    });
+    if (pageCount > 1) {
+      this.button("‹", 236, 843, 60, 35, "mobile-page", { target: "pets", delta: -1 }, {
+        disabled: this.mobilePetPage === 0,
+        size: 18
+      });
+      this.text(`${this.mobilePetPage + 1} / ${pageCount}`, 320, 860, 11, C.ink, "center", 900);
+      this.button("›", 344, 843, 60, 35, "mobile-page", { target: "pets", delta: 1 }, {
+        disabled: this.mobilePetPage >= pageCount - 1,
+        size: 18
+      });
+    }
+  }
+
+  startLinkRound(carry = {}) {
     const rows = 5;
     const cols = 8;
     const symbols = [];
@@ -2257,14 +2971,18 @@ class HarvestCollection {
       cols,
       board: Array.from({ length: rows }, (_, row) => symbols.slice(row * cols, (row + 1) * cols)),
       selected: null,
-      score: 0,
+      score: carry.score ?? 0,
       combo: 0,
-      bestCombo: 0,
-      clearedBoards: 0,
-      rewards: 0,
+      bestCombo: carry.bestCombo ?? 0,
+      clearedBoards: carry.clearedBoards ?? 0,
+      matchedPairs: carry.matchedPairs ?? 0,
+      rewardPairs: carry.rewardPairs ?? 0,
+      rewards: carry.rewards ?? 0,
+      flowMode: LINK_FLOW_MODES[(carry.clearedBoards ?? 0) % LINK_FLOW_MODES.length].id,
       lastPath: null,
       lastMatch: null,
       invalidMatch: null,
+      shiftAnimation: null,
       hint: null,
       selectedAt: 0,
       lockedUntil: 0,
@@ -2275,6 +2993,7 @@ class HarvestCollection {
   }
 
   linkCellCenter(row, col) {
+    if (MOBILE_LAYOUT) return { x: 54 + col * 75, y: 280 + row * 82 };
     return { x: 185 + col * 74 + 33, y: 224 + row * 66 + 28 };
   }
 
@@ -2332,6 +3051,49 @@ class HarvestCollection {
     return null;
   }
 
+  applyLinkFlow(startedAt) {
+    if (!this.link) return [];
+    const { rows, cols, board, flowMode } = this.link;
+    const next = Array.from({ length: rows }, () => Array(cols).fill(null));
+    const moves = [];
+    const place = (entry, row, col) => {
+      next[row][col] = entry.value;
+      if (entry.row !== row || entry.col !== col) {
+        moves.push({ ...entry, toRow: row, toCol: col });
+      }
+    };
+
+    if (flowMode === "down" || flowMode === "up") {
+      for (let col = 0; col < cols; col += 1) {
+        const entries = [];
+        for (let row = 0; row < rows; row += 1) {
+          if (board[row][col] != null) entries.push({ row, col, value: board[row][col] });
+        }
+        const startRow = flowMode === "down" ? rows - entries.length : 0;
+        entries.forEach((entry, index) => place(entry, startRow + index, col));
+      }
+    } else {
+      for (let row = 0; row < rows; row += 1) {
+        const entries = [];
+        for (let col = 0; col < cols; col += 1) {
+          if (board[row][col] != null) entries.push({ row, col, value: board[row][col] });
+        }
+        const startCol = flowMode === "center" ? Math.floor((cols - entries.length) / 2) : 0;
+        entries.forEach((entry, index) => place(entry, row, startCol + index));
+      }
+    }
+
+    this.link.board = next;
+    if (moves.length) {
+      this.link.shiftAnimation = {
+        moves,
+        startedAt: startedAt + 170,
+        until: startedAt + 500
+      };
+    }
+    return moves;
+  }
+
   clickLinkCell(row, col) {
     if (!this.link || this.now() < this.link.lockedUntil || this.link.board[row][col] == null) return;
     const cell = { row, col };
@@ -2361,7 +3123,11 @@ class HarvestCollection {
     this.link.board[row][col] = null;
     this.link.combo += 1;
     this.link.bestCombo = Math.max(this.link.bestCombo, this.link.combo);
-    this.link.score += 90 + this.link.combo * 15;
+    this.link.matchedPairs += 1;
+    this.link.rewardPairs += 1;
+    this.link.score += 100 + this.link.combo * 18;
+    const comboBonus = this.link.combo > 0 && this.link.combo % 4 === 0;
+    if (comboBonus) this.link.rewardPairs += 1;
     const startedAt = this.now();
     this.link.lastPath = { path, startedAt, until: startedAt + 560 };
     this.link.lastMatch = {
@@ -2375,9 +3141,24 @@ class HarvestCollection {
     const remaining = this.link.board.flat().filter((value) => value != null).length;
     if (!remaining) {
       this.link.pendingFinish = true;
-    } else if (!this.findLinkMove()) {
-      this.link.pendingShuffle = true;
+    } else {
+      const moves = this.applyLinkFlow(startedAt);
+      if (moves.length) this.link.lockedUntil = Math.max(this.link.lockedUntil, startedAt + 500);
+      if (!this.findLinkMove()) this.link.pendingShuffle = true;
     }
+    if (this.link.rewardPairs >= 8) {
+      const result = Core.claimMiniMilestone(this.state, "link");
+      this.link.rewardPairs -= 8;
+      this.link.rewards += result.reward.amount;
+      this.showToast(
+        `配对里程碑：种子券 +${result.reward.amount}${this.miniGiftLabel(result.bonus)}`,
+        "good",
+        result.bonus ? 2600 : 1800
+      );
+    } else if (comboBonus) {
+      this.showToast("四连击：种子券进度 +1", "good", 1200);
+    }
+    this.advanceFestival("link", 1);
   }
 
   shuffleLink(costsSun = true) {
@@ -2417,18 +3198,17 @@ class HarvestCollection {
 
   completeLinkBoard() {
     if (!this.link) return;
-    const score = this.link.score;
-    const rewards = this.link.rewards;
-    const clearedBoards = this.link.clearedBoards;
-    const bestCombo = this.link.bestCombo;
-    const result = Core.claimMiniMilestone(this.state, "link");
-    const reward = result.reward.amount;
-    this.startLinkRound();
-    this.link.score = score;
-    this.link.rewards = rewards + reward;
-    this.link.clearedBoards = clearedBoards + 1;
-    this.link.bestCombo = bestCombo;
-    this.showToast(`盘面清空：种子券 +${reward}${result.festival ? "，丰收庆典完成！" : ""}`, "good", 2600);
+    const carry = {
+      score: this.link.score + 260,
+      rewards: this.link.rewards,
+      clearedBoards: this.link.clearedBoards + 1,
+      matchedPairs: this.link.matchedPairs,
+      rewardPairs: this.link.rewardPairs,
+      bestCombo: this.link.bestCombo
+    };
+    this.startLinkRound(carry);
+    const mode = LINK_FLOW_MODES.find((entry) => entry.id === this.link.flowMode);
+    this.showToast(`盘面清空：进入${mode.name}，规则已变化`, "good", 2200);
   }
 
   drawLinkSymbol(symbol, x, y) {
@@ -2574,6 +3354,7 @@ class HarvestCollection {
     ctx.globalAlpha = alpha;
     ctx.translate(x + w / 2 + offsetX, y + h / 2 + offsetY);
     ctx.scale(scale, scale);
+    this.rounded(-w / 2 + 2, -h / 2 + 3, w, h, 6, "rgba(52,70,74,0.14)");
     if (options.glow) {
       ctx.shadowColor = options.glow;
       ctx.shadowBlur = 12;
@@ -2587,20 +3368,26 @@ class HarvestCollection {
 
   drawLink() {
     if (!this.link) this.startLinkRound();
+    const flow = LINK_FLOW_MODES.find((entry) => entry.id === this.link.flowMode);
     this.text("田园连连看", 22, 151, 18, C.ink, "left", 900);
-    this.text("连接同类图块，最多转两个弯", 142, 151, 10, C.greenDark, "left", 700);
+    this.text(`${flow.name} · ${flow.description}`, 142, 151, 10, C.greenDark, "left", 700);
     this.rounded(20, 169, 920, 43, 6, C.paper, C.ink, 2);
     this.text(`得分 ${this.link.score}`, 42, 191, 13, C.ink, "left", 900);
-    this.text(`连击 ×${this.link.combo}`, 178, 191, 12, C.coralDark, "left", 800);
-    this.text(`最佳 ×${this.link.bestCombo}`, 316, 191, 12, C.ink, "left", 800);
-    this.text(`本次种子券 +${this.link.rewards}`, 444, 191, 11, C.greenDark, "left", 800);
+    this.text(`连击 ×${this.link.combo}`, 170, 191, 12, C.coralDark, "left", 800);
+    this.text(`地形 ${flow.name}`, 286, 191, 11, C.ink, "left", 800);
+    this.text(`种子券 ${this.link.rewardPairs}/8 对`, 420, 191, 11, C.greenDark, "left", 800);
     this.button("提示 ☀1", 708, 175, 98, 30, "link-hint", {}, { fill: C.greenSoft, size: 11 });
     this.button("重排 ☀1", 818, 175, 104, 30, "link-shuffle", {}, { fill: C.yellowSoft, size: 11 });
 
+    const shift = this.link.shiftAnimation?.until > this.frameNow ? this.link.shiftAnimation : null;
+    const movingTargets = new Set(
+      (shift?.moves || []).map((entry) => `${entry.toRow},${entry.toCol}`)
+    );
     for (let row = 0; row < this.link.rows; row += 1) {
       for (let col = 0; col < this.link.cols; col += 1) {
         const value = this.link.board[row][col];
         if (value == null) continue;
+        if (movingTargets.has(`${row},${col}`)) continue;
         const x = 185 + col * 74;
         const y = 224 + row * 66;
         const selected = this.link.selected?.row === row && this.link.selected?.col === col;
@@ -2619,6 +3406,19 @@ class HarvestCollection {
           glow: selected ? "rgba(243,201,85,0.7)" : null
         });
       }
+    }
+    if (shift) {
+      const progress = easeInOut((this.frameNow - shift.startedAt) / (shift.until - shift.startedAt));
+      shift.moves.forEach((entry) => {
+        const from = this.linkCellCenter(entry.row, entry.col);
+        const to = this.linkCellCenter(entry.toRow, entry.toCol);
+        const centerX = from.x + (to.x - from.x) * progress;
+        const centerY = from.y + (to.y - from.y) * progress;
+        this.drawLinkTile(entry.value, centerX - 33, centerY - 28, 66, 56, false, false, {
+          scale: 1 + Math.sin(progress * Math.PI) * 0.04,
+          glow: "rgba(116,191,112,0.45)"
+        });
+      });
     }
 
     if (this.link.lastPath && this.link.lastPath.until > this.frameNow) {
@@ -2679,24 +3479,219 @@ class HarvestCollection {
       this.text(`连击 ×${this.link.lastMatch.combo}`, center.x + 48, center.y - 34 - progress * 18, 13 + burst * 3, C.coralDark, "center", 900);
       this.ctx.restore();
     }
-    this.text("清空盘面立即获得种子券并继续；没有组合时自动重排", WIDTH / 2, 595, 10, C.inkSoft, "center", 700);
+    const festivalProgress = this.state.festival.link
+      ? "已完成"
+      : `${this.state.festivalProgress.link}/${this.state.festivalGoals.link} 对`;
+    this.text(
+      `每配对 8 组领种子券 · 礼袋 ${this.state.miniGiftProgress}/3 · 庆典 ${festivalProgress}`,
+      WIDTH / 2,
+      595,
+      10,
+      C.inkSoft,
+      "center",
+      700
+    );
   }
 
-  zumaPathPoint(progress) {
+  drawMobileLink() {
+    if (!this.link) this.startLinkRound();
+    const flow = LINK_FLOW_MODES.find((entry) => entry.id === this.link.flowMode);
+    this.drawMobileTitle("田园连连看", `${flow.name} · ${flow.description}`);
+    this.rounded(18, 151, 604, 45, 6, C.paper, C.ink, 2);
+    this.text(`得分 ${this.link.score}`, 34, 174, 11, C.ink, "left", 900);
+    this.text(`连击 ×${this.link.combo}`, 163, 174, 10, C.coralDark, "left", 800);
+    this.text(`种子券 ${this.link.rewardPairs}/8 对`, 292, 174, 10, C.greenDark, "left", 800);
+    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 486, 174, 10, C.ink, "left", 800);
+    this.button("提示 ☀1", 18, 204, 294, 40, "link-hint", {}, { fill: C.greenSoft, size: 10 });
+    this.button("重排 ☀1", 328, 204, 294, 40, "link-shuffle", {}, { fill: C.yellowSoft, size: 10 });
+
+    const shift = this.link.shiftAnimation?.until > this.frameNow ? this.link.shiftAnimation : null;
+    const movingTargets = new Set((shift?.moves || []).map((entry) => `${entry.toRow},${entry.toCol}`));
+    for (let row = 0; row < this.link.rows; row += 1) {
+      for (let col = 0; col < this.link.cols; col += 1) {
+        const value = this.link.board[row][col];
+        if (value == null || movingTargets.has(`${row},${col}`)) continue;
+        const x = 20 + col * 75;
+        const y = 244 + row * 82;
+        const selected = this.link.selected?.row === row && this.link.selected?.col === col;
+        const hinted = this.link.hint?.some((cell) => cell.row === row && cell.col === col);
+        const invalid = this.link.invalidMatch?.until > this.frameNow
+          && this.link.invalidMatch.cells.some((entry) => entry.row === row && entry.col === col);
+        const shakeProgress = invalid ? clamp01((this.frameNow - this.link.invalidMatch.startedAt) / 360) : 0;
+        this.addHit("link-cell", x, y, 68, 72, { row, col });
+        this.drawLinkTile(value, x, y, 68, 72, selected, hinted, {
+          scale: selected ? 1 + Math.sin((this.frameNow - this.link.selectedAt) / 115) * 0.035 : 1,
+          offsetX: invalid ? Math.sin(shakeProgress * Math.PI * 7) * 7 * (1 - shakeProgress) : 0,
+          glow: selected ? "rgba(243,201,85,0.7)" : null
+        });
+      }
+    }
+    if (shift) {
+      const progress = easeInOut((this.frameNow - shift.startedAt) / (shift.until - shift.startedAt));
+      shift.moves.forEach((entry) => {
+        const from = this.linkCellCenter(entry.row, entry.col);
+        const to = this.linkCellCenter(entry.toRow, entry.toCol);
+        this.drawLinkTile(
+          entry.value,
+          from.x + (to.x - from.x) * progress - 34,
+          from.y + (to.y - from.y) * progress - 36,
+          68,
+          72,
+          false,
+          false,
+          { scale: 1 + Math.sin(progress * Math.PI) * 0.04, glow: "rgba(116,191,112,0.45)" }
+        );
+      });
+    }
+    if (this.link.lastPath && this.link.lastPath.until > this.frameNow) {
+      const progress = clamp01((this.frameNow - this.link.lastPath.startedAt) / (this.link.lastPath.until - this.link.lastPath.startedAt));
+      const points = this.link.lastPath.path.map((point) => {
+        const row = point.row - 1;
+        const col = point.col - 1;
+        if (row >= 0 && row < this.link.rows && col >= 0 && col < this.link.cols) return this.linkCellCenter(row, col);
+        return {
+          x: col < 0 ? 12 : col >= this.link.cols ? 628 : 54 + col * 75,
+          y: row < 0 ? 236 : row >= this.link.rows ? 657 : 280 + row * 82
+        };
+      });
+      this.ctx.beginPath();
+      this.ctx.moveTo(points[0].x, points[0].y);
+      points.slice(1).forEach((point) => this.ctx.lineTo(point.x, point.y));
+      this.ctx.strokeStyle = C.coral;
+      this.ctx.lineWidth = 3 + Math.sin(progress * Math.PI) * 3;
+      this.ctx.lineCap = "round";
+      this.ctx.setLineDash([10, 7]);
+      this.ctx.lineDashOffset = -progress * 55;
+      this.ctx.stroke();
+      this.ctx.setLineDash([]);
+    }
+    if (this.link.lastMatch && this.link.lastMatch.until > this.frameNow) {
+      const progress = clamp01((this.frameNow - this.link.lastMatch.startedAt) / (this.link.lastMatch.until - this.link.lastMatch.startedAt));
+      this.link.lastMatch.cells.forEach((entry) => {
+        const center = this.linkCellCenter(entry.row, entry.col);
+        this.drawLinkTile(entry.value, center.x - 34, center.y - 36, 68, 72, false, false, {
+          scale: 1 + Math.sin(progress * Math.PI) * 0.2,
+          alpha: 1 - easeInOut(progress),
+          offsetY: -progress * 10,
+          glow: C.yellow
+        });
+      });
+    }
+
+    this.rounded(18, 669, 604, 91, 7, C.paper, C.ink, 2);
+    this.text("循环奖励", 34, 690, 12, C.ink, "left", 900);
+    this.text(`再配对 ${8 - this.link.rewardPairs} 组获得种子券`, 34, 718, 10, C.greenDark, "left", 800);
+    this.text(
+      `庆典：${this.state.festival.link ? "本轮已完成" : `${this.state.festivalProgress.link}/${this.state.festivalGoals.link} 对`}`,
+      34,
+      744,
+      10,
+      C.coralDark,
+      "left",
+      800
+    );
+    this.rounded(18, 770, 604, 103, 7, C.cream, C.ink, 2);
+    this.text("地形规则", 34, 792, 12, C.ink, "left", 900);
+    LINK_FLOW_MODES.forEach((entry, index) => {
+      const active = entry.id === this.link.flowMode;
+      this.rounded(34 + index * 144, 811, 134, 43, 5, active ? C.greenSoft : C.paper, C.ink, active ? 2 : 1);
+      this.text(entry.name, 101 + index * 144, 825, 10, active ? C.greenDark : C.ink, "center", 900);
+      this.text(entry.description.replace("配对后", ""), 101 + index * 144, 845, 8, C.inkSoft, "center", 700);
+    });
+  }
+
+  zumaRawPathPoint(progress) {
     const p = Math.max(0, Math.min(1, progress));
-    const xs = [44, 95, 185, 285, 370, 405, 350, 250, 155, 120, 185, 290, 400, 485, 555, 665, 760, 805, 765, 675, 600, 635, 725, 820, 905];
-    const ys = [405, 315, 255, 270, 330, 400, 470, 492, 460, 385, 325, 310, 350, 425, 475, 480, 430, 350, 275, 245, 305, 385, 410, 380, 330];
+    if (MOBILE_LAYOUT) {
+      const xs = [
+        35, 75, 145, 235, 315, 350, 315, 235, 145, 82, 108, 185,
+        290, 400, 505, 575, 595, 540, 450, 350, 250, 205, 250, 350,
+        465, 545, 570, 525, 440, 345, 250, 155, 82, 125, 235, 365,
+        485, 585, 608
+      ];
+      const ys = [
+        350, 275, 230, 225, 270, 340, 410, 445, 425, 365, 300, 270,
+        295, 360, 435, 515, 585, 645, 680, 650, 590, 510, 430, 370,
+        320, 265, 225, 212, 245, 305, 380, 455, 535, 610, 655, 640,
+        585, 505, 425
+      ];
+      return {
+        x: Phaser.Math.Interpolation.CatmullRom(xs, p),
+        y: Phaser.Math.Interpolation.CatmullRom(ys, p)
+      };
+    }
+    const xs = [
+      42, 78, 145, 235, 315, 350, 315, 235, 145, 105, 135, 210,
+      315, 410, 455, 420, 345, 285, 340, 450, 545, 610, 665, 745,
+      825, 875, 845, 770, 680, 625, 655, 730, 820, 910
+    ];
+    const ys = [
+      390, 305, 250, 238, 275, 335, 400, 435, 420, 360, 300, 270,
+      300, 360, 425, 480, 498, 465, 410, 355, 315, 255, 235, 255,
+      305, 365, 425, 448, 435, 385, 325, 292, 320, 382
+    ];
     return {
       x: Phaser.Math.Interpolation.CatmullRom(xs, p),
       y: Phaser.Math.Interpolation.CatmullRom(ys, p)
     };
   }
 
+  ensureZumaPathCache() {
+    if (this.zumaPathCache) return this.zumaPathCache;
+    const samples = 1400;
+    const points = [];
+    const distances = [0];
+    let length = 0;
+    for (let index = 0; index <= samples; index += 1) {
+      const point = this.zumaRawPathPoint(index / samples);
+      if (points.length) {
+        const previous = points[points.length - 1];
+        length += Phaser.Math.Distance.Between(previous.x, previous.y, point.x, point.y);
+        distances.push(length);
+      }
+      points.push(point);
+    }
+    this.zumaPathCache = { points, distances, length, samples };
+    return this.zumaPathCache;
+  }
+
+  zumaPathPoint(progress) {
+    const p = Math.max(0, Math.min(1, progress));
+    const cache = this.ensureZumaPathCache();
+    const target = p * cache.length;
+    let low = 0;
+    let high = cache.distances.length - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (cache.distances[middle] < target) low = middle + 1;
+      else high = middle;
+    }
+    const afterIndex = Math.max(1, low);
+    const beforeIndex = afterIndex - 1;
+    const span = Math.max(0.001, cache.distances[afterIndex] - cache.distances[beforeIndex]);
+    const ratio = (target - cache.distances[beforeIndex]) / span;
+    const before = cache.points[beforeIndex];
+    const after = cache.points[afterIndex];
+    return {
+      x: before.x + (after.x - before.x) * ratio,
+      y: before.y + (after.y - before.y) * ratio
+    };
+  }
+
+  zumaSpacing() {
+    return 29 / this.ensureZumaPathCache().length;
+  }
+
+  isZumaBridge(progress) {
+    return ZUMA_BRIDGES.some((bridge) => progress >= bridge.start && progress <= bridge.end);
+  }
+
   startZumaRound() {
     const colors = [0, 1, 2, 3, 4];
     const balls = [];
-    for (let i = 0; i < 20; i += 1) {
-      balls.push({ color: colors[Math.floor(Math.random() * colors.length)], p: 0.4 - i * 0.034 });
+    const spacing = this.zumaSpacing();
+    for (let i = 0; i < 22; i += 1) {
+      balls.push({ color: colors[Math.floor(Math.random() * colors.length)], p: 0.36 - i * spacing });
     }
     this.zuma = {
       balls,
@@ -2708,8 +3703,9 @@ class HarvestCollection {
       bestCombo: 0,
       totalCleared: 0,
       rewards: 0,
-      nextRewardScore: 1500,
-      spawned: 18,
+      rewardCleared: 0,
+      nextRewardClears: 12,
+      spawned: 22,
       spawnTimer: 0,
       slowUntil: 0,
       gap: null
@@ -2724,9 +3720,13 @@ class HarvestCollection {
     return choices[Math.floor(Math.random() * choices.length)];
   }
 
+  zumaShooterOrigin() {
+    return MOBILE_LAYOUT ? { x: 320, y: 756 } : { x: 448, y: 558 };
+  }
+
   shootZuma(x, y) {
     if (!this.zuma) return;
-    const origin = { x: 448, y: 558 };
+    const origin = this.zumaShooterOrigin();
     const angle = Phaser.Math.Angle.Between(origin.x, origin.y, x, y);
     this.zuma.projectiles.push({
       x: origin.x,
@@ -2740,9 +3740,10 @@ class HarvestCollection {
   }
 
   insertZumaBall(projectile, hitIndex) {
+    const spacing = this.zumaSpacing();
     if (this.zuma.gap) {
       for (let index = 1; index < this.zuma.balls.length; index += 1) {
-        this.zuma.balls[index].p = this.zuma.balls[index - 1].p - 0.034;
+        this.zuma.balls[index].p = this.zuma.balls[index - 1].p - spacing;
       }
       this.zuma.gap = null;
     }
@@ -2756,10 +3757,10 @@ class HarvestCollection {
     const projectileOffsetY = projectile.y - point.y;
     const insertBefore = projectileOffsetX * tangentX + projectileOffsetY * tangentY > 0;
     const insertIndex = insertBefore ? hitIndex : hitIndex + 1;
-    const newBall = { color: projectile.color, p: hit.p + (insertBefore ? 0.017 : -0.017) };
+    const newBall = { color: projectile.color, p: hit.p + (insertBefore ? spacing / 2 : -spacing / 2) };
     this.zuma.balls.splice(insertIndex, 0, newBall);
     for (let i = 1; i < this.zuma.balls.length; i += 1) {
-      this.zuma.balls[i].p = Math.min(this.zuma.balls[i].p, this.zuma.balls[i - 1].p - 0.034);
+      this.zuma.balls[i].p = Math.min(this.zuma.balls[i].p, this.zuma.balls[i - 1].p - spacing);
     }
     this.resolveZumaMatches(insertIndex);
   }
@@ -2782,6 +3783,8 @@ class HarvestCollection {
     this.zuma.combo += 1;
     this.zuma.bestCombo = Math.max(this.zuma.bestCombo, this.zuma.combo);
     this.zuma.totalCleared += count;
+    this.zuma.rewardCleared += count;
+    if (this.zuma.combo >= 2) this.zuma.rewardCleared += 2;
     this.zuma.score += count * 110 * this.zuma.combo;
     this.addActionEffect("zuma-pop", {
       points: clearedPoints,
@@ -2789,6 +3792,7 @@ class HarvestCollection {
       view: "zuma"
     }, 620);
     this.awardZumaMilestones();
+    this.advanceFestival("zuma", count);
     this.zuma.gap = left > 0 && left < balls.length
       ? { frontEnd: left - 1, tailStart: left }
       : null;
@@ -2799,27 +3803,30 @@ class HarvestCollection {
 
   updateZuma(dt) {
     if (!this.zuma) return;
+    const spacing = this.zumaSpacing();
+    const pathLength = this.ensureZumaPathCache().length;
     if (!this.zuma.balls.length) {
       for (let index = 0; index < 8; index += 1) {
-        this.zuma.balls.push({ color: Math.floor(Math.random() * 5), p: -index * 0.034 });
+        this.zuma.balls.push({ color: Math.floor(Math.random() * 5), p: -index * spacing });
       }
       this.zuma.spawned += 8;
       this.zuma.currentColor = this.randomZumaColor();
       this.zuma.nextColor = this.randomZumaColor();
     }
     const slow = this.now() < this.zuma.slowUntil;
-    const speed = (0.023 + Math.min(0.008, this.zuma.score / 180_000)) * (slow ? 0.45 : 1);
+    const speedPixels = 58 + Math.min(22, this.zuma.score / 180);
+    const speed = (speedPixels / pathLength) * (slow ? 0.45 : 1);
     this.zuma.spawnTimer += dt;
-    if (this.zuma.spawnTimer >= 0.92 && this.zuma.balls.length < 32) {
+    if (this.zuma.spawnTimer >= 0.78 && this.zuma.balls.length < 44) {
       this.zuma.spawnTimer = 0;
       const tailP = this.zuma.balls.length ? this.zuma.balls[this.zuma.balls.length - 1].p : -0.03;
-      this.zuma.balls.push({ color: this.randomZumaColor(), p: Math.min(-0.03, tailP - 0.034) });
+      this.zuma.balls.push({ color: this.randomZumaColor(), p: Math.min(-spacing, tailP - spacing) });
       this.zuma.spawned += 1;
     }
     if (this.zuma.balls.length) {
       this.zuma.balls[0].p += speed * dt;
       for (let i = 1; i < this.zuma.balls.length; i += 1) {
-        const desired = this.zuma.balls[i - 1].p - 0.034;
+        const desired = this.zuma.balls[i - 1].p - spacing;
         this.zuma.balls[i].p = Math.min(desired, this.zuma.balls[i].p + speed * dt);
       }
       if (this.zuma.gap) {
@@ -2829,8 +3836,8 @@ class HarvestCollection {
         if (!front || !tail) {
           this.zuma.gap = null;
         } else {
-          const distance = Math.max(0, front.p - tail.p - 0.034);
-          const rollback = Math.min(distance, 0.13 * dt);
+          const distance = Math.max(0, front.p - tail.p - spacing);
+          const rollback = Math.min(distance, (185 / pathLength) * dt);
           for (let index = 0; index <= gap.frontEnd; index += 1) this.zuma.balls[index].p -= rollback;
           if (distance <= 0.001 || rollback >= distance) {
             this.zuma.gap = null;
@@ -2844,7 +3851,7 @@ class HarvestCollection {
         const removed = Math.min(6, this.zuma.balls.length);
         this.zuma.balls.splice(0, removed);
         this.zuma.balls.forEach((ball) => {
-          ball.p -= 0.2;
+          ball.p -= spacing * (removed + 2);
         });
         this.zuma.combo = 0;
         this.zuma.gap = null;
@@ -2879,11 +3886,15 @@ class HarvestCollection {
   }
 
   awardZumaMilestones() {
-    while (this.zuma.score >= this.zuma.nextRewardScore) {
+    while (this.zuma.rewardCleared >= this.zuma.nextRewardClears) {
       const result = Core.claimMiniMilestone(this.state, "zuma");
       this.zuma.rewards += result.reward.amount;
-      this.zuma.nextRewardScore += 1500;
-      this.showToast(`清理里程碑：堆肥 +${result.reward.amount}、品质祝福 +${result.reward.blessing}${result.festival ? "，丰收庆典完成！" : ""}`, "good", 2600);
+      this.zuma.rewardCleared -= this.zuma.nextRewardClears;
+      this.showToast(
+        `清理 12 颗：堆肥 +${result.reward.amount}、品质祝福 +${result.reward.blessing}${this.miniGiftLabel(result.bonus)}`,
+        "good",
+        result.bonus ? 2800 : 2200
+      );
     }
   }
 
@@ -2900,8 +3911,10 @@ class HarvestCollection {
     const removed = Math.min(4, this.zuma.balls.length);
     this.zuma.balls.splice(0, removed);
     this.zuma.totalCleared += removed;
+    this.zuma.rewardCleared += removed;
     this.zuma.score += removed * 70;
     this.awardZumaMilestones();
+    this.advanceFestival("zuma", removed);
     this.showToast(`清理最前方 ${removed} 颗`, "good");
   }
 
@@ -2912,8 +3925,10 @@ class HarvestCollection {
 
   drawZumaBall(colorIndex, x, y, radius = 15) {
     const crop = Core.CROPS[colorIndex % 5];
+    this.circle(x + 2, y + 3, radius, "rgba(52,70,74,0.22)");
     this.circle(x, y, radius, crop.color, C.ink, 2);
-    this.circle(x - radius * 0.3, y - radius * 0.3, radius * 0.22, "rgba(255,255,255,0.6)");
+    this.circle(x, y, radius - 4, null, "rgba(255,255,255,0.35)", 2);
+    this.circle(x - radius * 0.3, y - radius * 0.3, radius * 0.2, "rgba(255,255,255,0.72)");
     this.rect(x - 2, y - radius - 4, 4, 5, C.greenDark);
   }
 
@@ -2981,15 +3996,91 @@ class HarvestCollection {
       });
   }
 
+  traceZumaTrack(start = 0, end = 1, steps = 240, offsetY = 0) {
+    this.ctx.beginPath();
+    for (let index = 0; index <= steps; index += 1) {
+      const progress = start + (end - start) * (index / steps);
+      const point = this.zumaPathPoint(progress);
+      if (index === 0) this.ctx.moveTo(point.x, point.y + offsetY);
+      else this.ctx.lineTo(point.x, point.y + offsetY);
+    }
+  }
+
+  strokeZumaTrack(start = 0, end = 1, raised = false) {
+    const steps = Math.max(20, Math.ceil((end - start) * 260));
+    this.ctx.save();
+    this.ctx.lineCap = "round";
+    this.ctx.lineJoin = "round";
+    this.traceZumaTrack(start, end, steps, raised ? 9 : 7);
+    this.ctx.strokeStyle = raised ? "rgba(67,55,48,0.58)" : "rgba(117,70,60,0.5)";
+    this.ctx.lineWidth = raised ? 48 : 46;
+    this.ctx.stroke();
+    this.traceZumaTrack(start, end, steps);
+    this.ctx.strokeStyle = raised ? "#405156" : "rgba(52,70,74,0.42)";
+    this.ctx.lineWidth = raised ? 45 : 43;
+    this.ctx.stroke();
+    this.ctx.strokeStyle = raised ? "#e7d6a4" : C.paper2;
+    this.ctx.lineWidth = raised ? 37 : 35;
+    this.ctx.stroke();
+    this.ctx.strokeStyle = raised ? "#fff8d8" : C.cream;
+    this.ctx.lineWidth = raised ? 27 : 25;
+    this.ctx.stroke();
+    this.ctx.strokeStyle = raised ? C.greenDark : C.inkSoft;
+    this.ctx.lineWidth = raised ? 3 : 2;
+    this.ctx.stroke();
+    if (raised) {
+      [start, end].forEach((progress) => {
+        const point = this.zumaPathPoint(progress);
+        this.circle(point.x, point.y + 7, 5, C.soilDark, C.ink, 1);
+        this.rect(point.x - 3, point.y - 15, 6, 23, C.paper2, C.ink, 1);
+      });
+    }
+    this.ctx.restore();
+  }
+
+  drawZumaDirections(start = 0, end = 1) {
+    const first = Math.ceil(start * 14);
+    const last = Math.floor(end * 14);
+    for (let index = first; index <= last; index += 1) {
+      const progress = index / 14;
+      if (progress <= start || progress >= end) continue;
+      const point = this.zumaPathPoint(progress);
+      const ahead = this.zumaPathPoint(Math.min(1, progress + 0.006));
+      const angle = Math.atan2(ahead.y - point.y, ahead.x - point.x);
+      this.ctx.save();
+      this.ctx.translate(point.x, point.y);
+      this.ctx.rotate(angle);
+      this.ctx.fillStyle = C.greenDark;
+      this.ctx.strokeStyle = C.cream;
+      this.ctx.lineWidth = 2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(9, 0);
+      this.ctx.lineTo(-5, -7);
+      this.ctx.lineTo(-2, 0);
+      this.ctx.lineTo(-5, 7);
+      this.ctx.closePath();
+      this.ctx.fill();
+      this.ctx.stroke();
+      this.ctx.restore();
+    }
+  }
+
   drawZuma() {
     if (!this.zuma) this.startZumaRound();
     this.text("田园祖玛", 22, 151, 18, C.ink, "left", 900);
-    this.text("发射同色果实，三个以上相连即可清除", 123, 151, 10, C.greenDark, "left", 700);
     this.rounded(20, 169, 920, 43, 6, C.paper, C.ink, 2);
     this.text(`得分 ${this.zuma.score}`, 42, 191, 13, C.ink, "left", 900);
-    this.text(`连锁 ×${this.zuma.combo}`, 178, 191, 12, C.coralDark, "left", 800);
-    this.text(`已清理 ${this.zuma.totalCleared}`, 306, 191, 12, C.ink, "left", 800);
-    this.text(`下次堆肥 ${this.zuma.score % 1500}/1500`, 434, 191, 11, C.greenDark, "left", 800);
+    this.text(`连锁 ×${this.zuma.combo}`, 166, 191, 12, C.coralDark, "left", 800);
+    this.text(`堆肥 ${this.zuma.rewardCleared}/12 颗`, 286, 191, 11, C.greenDark, "left", 800);
+    this.text(
+      `庆典 ${this.state.festival.zuma ? "完成" : `${this.state.festivalProgress.zuma}/${this.state.festivalGoals.zuma} 颗`}`,
+      442,
+      191,
+      11,
+      C.ink,
+      "left",
+      800
+    );
     this.button("减速 ☀2", 704, 175, 100, 30, "zuma-slow", {}, { fill: C.mint, size: 11 });
     this.button("清障 ☀3", 814, 175, 108, 30, "zuma-bomb", {}, { fill: C.yellowSoft, size: 11 });
 
@@ -3004,63 +4095,48 @@ class HarvestCollection {
       this.ctx.clip();
       this.ctx.imageSmoothingEnabled = false;
       this.ctx.drawImage(this.zumaFarmBackground, 0, sourceY, sourceWidth, sourceHeight, 22, 224, 916, 396);
+      this.rect(22, 224, 916, 396, "rgba(235,248,222,0.16)");
       this.ctx.restore();
     }
 
-    const traceTrack = (offsetY = 0) => {
-      this.ctx.beginPath();
-      for (let i = 0; i <= 220; i += 1) {
-        const point = this.zumaPathPoint(i / 220);
-        if (i === 0) this.ctx.moveTo(point.x, point.y + offsetY);
-        else this.ctx.lineTo(point.x, point.y + offsetY);
-      }
-    };
-    traceTrack(8);
-    this.ctx.strokeStyle = "rgba(117,70,60,0.55)";
-    this.ctx.lineWidth = 46;
-    this.ctx.lineCap = "round";
-    this.ctx.lineJoin = "round";
-    this.ctx.stroke();
-    traceTrack();
-    this.ctx.strokeStyle = "rgba(52,70,74,0.34)";
-    this.ctx.lineWidth = 43;
-    this.ctx.lineCap = "round";
-    this.ctx.lineJoin = "round";
-    this.ctx.stroke();
-    this.ctx.strokeStyle = C.paper2;
-    this.ctx.lineWidth = 35;
-    this.ctx.stroke();
-    this.ctx.strokeStyle = C.cream;
-    this.ctx.lineWidth = 25;
-    this.ctx.stroke();
-    this.ctx.strokeStyle = C.inkSoft;
-    this.ctx.lineWidth = 2;
-    this.ctx.stroke();
-
-    [0.05, 0.13, 0.21, 0.29, 0.37, 0.45, 0.53, 0.61, 0.69, 0.77, 0.85, 0.93].forEach((progress) => {
-      const point = this.zumaPathPoint(progress);
-      const ahead = this.zumaPathPoint(progress + 0.008);
-      const angle = Math.atan2(ahead.y - point.y, ahead.x - point.x);
-      this.ctx.save();
-      this.ctx.translate(point.x, point.y);
-      this.ctx.rotate(angle);
-      this.ctx.fillStyle = C.greenDark;
-      this.ctx.beginPath();
-      this.ctx.moveTo(8, 0);
-      this.ctx.lineTo(-5, -6);
-      this.ctx.lineTo(-2, 0);
-      this.ctx.lineTo(-5, 6);
-      this.ctx.closePath();
-      this.ctx.fill();
-      this.ctx.restore();
-    });
+    this.strokeZumaTrack();
+    this.drawZumaDirections();
     const end = this.zumaPathPoint(1);
     this.rounded(end.x - 33, end.y - 27, 66, 54, 6, C.soilDark, C.ink, 3);
     this.text("挡板", end.x, end.y + 1, 12, C.paper, "center", 900);
 
+    const origin = { x: 448, y: 558 };
+    if (this.hover && this.hover.y > 218 && this.hover.y < 620) {
+      const angle = Phaser.Math.Angle.Between(origin.x, origin.y, this.hover.x, this.hover.y);
+      const distance = Math.min(245, Phaser.Math.Distance.Between(origin.x, origin.y, this.hover.x, this.hover.y));
+      const guideX = origin.x + Math.cos(angle) * distance;
+      const guideY = origin.y + Math.sin(angle) * distance;
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.moveTo(origin.x, origin.y);
+      this.ctx.lineTo(guideX, guideY);
+      this.ctx.strokeStyle = "rgba(62,132,86,0.65)";
+      this.ctx.lineWidth = 2;
+      this.ctx.setLineDash([7, 7]);
+      this.ctx.stroke();
+      this.ctx.setLineDash([]);
+      this.circle(guideX, guideY, 7, null, C.greenDark, 2);
+      this.ctx.restore();
+    }
+
     for (let i = this.zuma.balls.length - 1; i >= 0; i -= 1) {
       const ball = this.zuma.balls[i];
-      if (ball.p < 0) continue;
+      if (ball.p < 0 || this.isZumaBridge(ball.p)) continue;
+      const point = this.zumaPathPoint(ball.p);
+      this.drawZumaBall(ball.color, point.x, point.y, 15);
+    }
+    ZUMA_BRIDGES.forEach((bridge) => {
+      this.strokeZumaTrack(bridge.start, bridge.end, true);
+      this.drawZumaDirections(bridge.start, bridge.end);
+    });
+    for (let i = this.zuma.balls.length - 1; i >= 0; i -= 1) {
+      const ball = this.zuma.balls[i];
+      if (ball.p < 0 || !this.isZumaBridge(ball.p)) continue;
       const point = this.zumaPathPoint(ball.p);
       this.drawZumaBall(ball.color, point.x, point.y, 15);
     }
@@ -3074,9 +4150,102 @@ class HarvestCollection {
     this.text("下一颗", 519, 547, 9, C.greenDark, "center", 800);
     this.drawZumaBall(this.zuma.nextColor, 519, 570, 11);
     this.button("换色", 571, 551, 80, 31, "zuma-swap", {}, { fill: C.cream, size: 11 });
+    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 611, 592, 9, C.greenDark, "center", 800);
   }
 
-  createMatchBoard() {
+  drawMobileZuma() {
+    if (!this.zuma) this.startZumaRound();
+    this.drawMobileTitle("田园祖玛", "点击轨道附近发射");
+    this.rounded(18, 151, 604, 45, 6, C.paper, C.ink, 2);
+    this.text(`得分 ${this.zuma.score}`, 34, 174, 11, C.ink, "left", 900);
+    this.text(`连锁 ×${this.zuma.combo}`, 158, 174, 10, C.coralDark, "left", 800);
+    this.text(`堆肥 ${this.zuma.rewardCleared}/12`, 278, 174, 10, C.greenDark, "left", 800);
+    this.text(
+      `庆典 ${this.state.festival.zuma ? "完成" : `${this.state.festivalProgress.zuma}/${this.state.festivalGoals.zuma}`}`,
+      442,
+      174,
+      10,
+      C.ink,
+      "left",
+      800
+    );
+    this.rounded(18, 204, 604, 586, 7, C.greenSoft, C.ink, 2);
+    if (this.zumaFarmBackground.complete && this.zumaFarmBackground.naturalWidth) {
+      const sw = this.zumaFarmBackground.naturalWidth;
+      const sh = this.zumaFarmBackground.naturalHeight;
+      const sourceWidth = Math.min(sw, Math.round(sh * (600 / 582)));
+      const sourceX = Math.max(0, Math.round((sw - sourceWidth) / 2));
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.roundRect(20, 206, 600, 582, 5);
+      this.ctx.clip();
+      this.ctx.imageSmoothingEnabled = false;
+      this.ctx.drawImage(this.zumaFarmBackground, sourceX, 0, sourceWidth, sh, 20, 206, 600, 582);
+      this.rect(20, 206, 600, 582, "rgba(235,248,222,0.2)");
+      this.ctx.restore();
+    }
+    this.strokeZumaTrack();
+    this.drawZumaDirections();
+    const end = this.zumaPathPoint(1);
+    this.rounded(end.x - 25, end.y - 23, 50, 46, 6, C.soilDark, C.ink, 3);
+    this.text("挡板", end.x, end.y + 1, 9, C.paper, "center", 900);
+
+    const origin = this.zumaShooterOrigin();
+    if (this.hover && this.hover.y > 200 && this.hover.y < 790) {
+      const angle = Phaser.Math.Angle.Between(origin.x, origin.y, this.hover.x, this.hover.y);
+      const distance = Math.min(300, Phaser.Math.Distance.Between(origin.x, origin.y, this.hover.x, this.hover.y));
+      const guideX = origin.x + Math.cos(angle) * distance;
+      const guideY = origin.y + Math.sin(angle) * distance;
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.moveTo(origin.x, origin.y);
+      this.ctx.lineTo(guideX, guideY);
+      this.ctx.strokeStyle = "rgba(62,132,86,0.65)";
+      this.ctx.lineWidth = 2;
+      this.ctx.setLineDash([7, 7]);
+      this.ctx.stroke();
+      this.ctx.setLineDash([]);
+      this.circle(guideX, guideY, 7, null, C.greenDark, 2);
+      this.ctx.restore();
+    }
+    for (let index = this.zuma.balls.length - 1; index >= 0; index -= 1) {
+      const ball = this.zuma.balls[index];
+      if (ball.p < 0 || this.isZumaBridge(ball.p)) continue;
+      const point = this.zumaPathPoint(ball.p);
+      this.drawZumaBall(ball.color, point.x, point.y, 15);
+    }
+    ZUMA_BRIDGES.forEach((bridge) => {
+      this.strokeZumaTrack(bridge.start, bridge.end, true);
+      this.drawZumaDirections(bridge.start, bridge.end);
+    });
+    for (let index = this.zuma.balls.length - 1; index >= 0; index -= 1) {
+      const ball = this.zuma.balls[index];
+      if (ball.p < 0 || !this.isZumaBridge(ball.p)) continue;
+      const point = this.zumaPathPoint(ball.p);
+      this.drawZumaBall(ball.color, point.x, point.y, 15);
+    }
+    this.zuma.projectiles.forEach((projectile) => this.drawZumaBall(projectile.color, projectile.x, projectile.y, 11));
+    this.drawZumaActionEffects();
+    this.circle(origin.x, origin.y + 7, 32, C.paper, C.ink, 3);
+    this.drawZumaBall(this.zuma.currentColor, origin.x, origin.y, 16);
+    this.text("发射", origin.x, origin.y + 27, 9, C.ink, "center", 900);
+    this.text("下一颗", origin.x + 68, origin.y - 19, 9, C.greenDark, "center", 800);
+    this.drawZumaBall(this.zuma.nextColor, origin.x + 68, origin.y + 5, 11);
+
+    this.button("减速 ☀2", 18, 800, 192, 76, "zuma-slow", {}, { fill: C.mint, size: 11 });
+    this.button("换色", 224, 800, 192, 76, "zuma-swap", {}, { fill: C.cream, size: 11 });
+    this.button("清障 ☀3", 430, 800, 192, 76, "zuma-bomb", {}, { fill: C.yellowSoft, size: 11 });
+  }
+
+  matchPaletteForMilestone(milestone = 0) {
+    return [...MATCH_PALETTES[Math.max(0, milestone) % MATCH_PALETTES.length]];
+  }
+
+  randomMatchTile(palette = this.match3?.palette || MATCH_PALETTES[0]) {
+    return palette[Math.floor(Math.random() * palette.length)];
+  }
+
+  createMatchBoard(palette = this.match3?.palette || MATCH_PALETTES[0]) {
     const rows = 7;
     const cols = 7;
     const board = Array.from({ length: rows }, () => Array(cols).fill(0));
@@ -3084,7 +4253,7 @@ class HarvestCollection {
       for (let col = 0; col < cols; col += 1) {
         let value;
         do {
-          value = Math.floor(Math.random() * 6);
+          value = this.randomMatchTile(palette);
         } while (
           (col >= 2 && board[row][col - 1] === value && board[row][col - 2] === value)
           || (row >= 2 && board[row - 1][col] === value && board[row - 2][col] === value)
@@ -3113,15 +4282,17 @@ class HarvestCollection {
   }
 
   startMatch3Round() {
+    const palette = this.matchPaletteForMilestone(0);
     let board;
-    do board = this.createMatchBoard();
+    do board = this.createMatchBoard(palette);
     while (!this.findValidMatchSwap(board));
     this.match3 = {
       board,
+      palette,
       selected: null,
       score: 0,
-      targetColor: Math.floor(Math.random() * MATCH_TILES.length),
-      target: 16,
+      targetColor: palette[Math.floor(Math.random() * palette.length)],
+      target: 10,
       collected: 0,
       combo: 0,
       bestCombo: 0,
@@ -3181,7 +4352,7 @@ class HarvestCollection {
       });
       let spawnIndex = 0;
       while (targetRow >= 0) {
-        const color = Math.floor(Math.random() * 6);
+        const color = this.randomMatchTile();
         nextBoard[targetRow][col] = color;
         moves.push({ color, col, fromRow: -1 - spawnIndex, toRow: targetRow, isNew: true });
         targetRow -= 1;
@@ -3266,6 +4437,7 @@ class HarvestCollection {
       const targetRemoved = removed.filter((entry) => entry.color === this.match3.targetColor).length;
       this.match3.collected += targetRemoved;
       this.match3.score += removed.length * 60 * chain;
+      this.advanceFestival("match3", removed.length);
       const moves = this.collapseMatchBoard();
       steps.push({
         chain,
@@ -3276,6 +4448,7 @@ class HarvestCollection {
         points: removed.length * 60 * chain
       });
     }
+    if (chain > 1) this.match3.collected += chain - 1;
     this.match3.combo = chain;
     this.match3.bestCombo = Math.max(this.match3.bestCombo, chain);
     if (animation && steps.length) {
@@ -3334,11 +4507,21 @@ class HarvestCollection {
     const result = Core.claimMiniMilestone(this.state, "match3");
     this.match3.rewards += result.reward.amount;
     this.match3.milestones += 1;
-    this.match3.collected = 0;
-    this.match3.target = 16 + Math.min(10, Math.floor(this.match3.milestones / 2) * 2);
-    do this.match3.targetColor = Math.floor(Math.random() * MATCH_TILES.length);
+    this.match3.collected = Math.max(0, this.match3.collected - this.match3.target);
+    this.match3.target = [10, 11, 12, 10][this.match3.milestones % 4];
+    this.match3.palette = this.matchPaletteForMilestone(this.match3.milestones);
+    do this.match3.targetColor = this.randomMatchTile();
     while (this.match3.targetColor === previousTarget);
-    this.showToast(`装箱里程碑：订单印章 +${result.reward.amount}${result.festival ? "，丰收庆典完成！" : ""}`, "good", 2600);
+    const before = this.cloneMatchBoard(this.match3.board);
+    do this.match3.board = this.createMatchBoard();
+    while (!this.findValidMatchSwap(this.match3.board));
+    this.match3.pendingShuffle = false;
+    this.startMatchShuffleAnimation(before);
+    this.showToast(
+      `装箱完成：订单印章 +${result.reward.amount}${this.miniGiftLabel(result.bonus)}，新品类已上架`,
+      "good",
+      result.bonus ? 3000 : 2400
+    );
   }
 
   drawGem(value, x, y, size, selected = false, options = {}) {
@@ -3354,6 +4537,11 @@ class HarvestCollection {
     if (options.glow) {
       ctx.shadowColor = options.glow;
       ctx.shadowBlur = 8;
+    } else {
+      ctx.shadowColor = "rgba(52,70,74,0.2)";
+      ctx.shadowOffsetX = 2;
+      ctx.shadowOffsetY = 3;
+      ctx.shadowBlur = 0;
     }
     if (selected) {
       ctx.beginPath();
@@ -3399,7 +4587,7 @@ class HarvestCollection {
       this.line(-size * 0.14, -size * 0.22, size * 0.14, -size * 0.22, tile.ink, 2);
       this.line(-size * 0.14, 0, size * 0.14, 0, tile.ink, 2);
       this.line(-size * 0.14, size * 0.22, size * 0.14, size * 0.22, tile.ink, 2);
-    } else {
+    } else if (tile.shape === "flower") {
       for (let petal = 0; petal < 6; petal += 1) {
         const angle = petal * Math.PI / 3;
         ctx.beginPath();
@@ -3412,13 +4600,38 @@ class HarvestCollection {
       ctx.fillStyle = C.cream;
       ctx.fill();
       ctx.stroke();
+    } else if (tile.shape === "star") {
+      ctx.beginPath();
+      for (let point = 0; point < 10; point += 1) {
+        const angle = -Math.PI / 2 + point * Math.PI / 5;
+        const radius = point % 2 ? size * 0.23 : size * 0.5;
+        const px = Math.cos(angle) * radius;
+        const py = Math.sin(angle) * radius;
+        if (point === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(0, -size * 0.52);
+      ctx.bezierCurveTo(size * 0.42, -size * 0.12, size * 0.44, size * 0.32, 0, size * 0.5);
+      ctx.bezierCurveTo(-size * 0.44, size * 0.32, -size * 0.42, -size * 0.12, 0, -size * 0.52);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      this.circle(size * 0.12, size * 0.14, size * 0.08, C.cream);
     }
+    ctx.shadowColor = "transparent";
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
     this.text(
       tile.label,
       0,
       1,
       Math.max(11, size * 0.36),
-      tile.shape === "capsule" || tile.shape === "flower" ? tile.ink : C.white,
+      tile.shape === "capsule" || tile.shape === "flower" || tile.shape === "star" ? tile.ink : C.white,
       "center",
       900
     );
@@ -3443,13 +4656,13 @@ class HarvestCollection {
     }
   }
 
-  drawStaticMatchBoard(board, startX, startY, cell, excluded = [], selected = null) {
+  drawStaticMatchBoard(board, startX, startY, cell, excluded = [], selected = null, gemSize = 38) {
     for (let row = 0; row < 7; row += 1) {
       for (let col = 0; col < 7; col += 1) {
         if (excluded.some((entry) => entry.row === row && entry.col === col)) continue;
         const isSelected = selected?.row === row && selected?.col === col;
         const pulse = isSelected ? 1 + Math.sin((this.frameNow - this.match3.selectedAt) / 110) * 0.055 : 1;
-        this.drawGem(board[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, 38, isSelected, {
+        this.drawGem(board[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, gemSize, isSelected, {
           scale: pulse,
           glow: isSelected ? C.yellow : null
         });
@@ -3457,16 +4670,16 @@ class HarvestCollection {
     }
   }
 
-  drawMatchAnimation(startX, startY, cell) {
+  drawMatchAnimation(startX, startY, cell, gemSize = 38) {
     const segment = this.activeMatchSegment();
     if (!segment) {
-      this.drawStaticMatchBoard(this.match3.board, startX, startY, cell, [], this.match3.selected);
+      this.drawStaticMatchBoard(this.match3.board, startX, startY, cell, [], this.match3.selected, gemSize);
       return;
     }
     const progress = clamp01((this.frameNow - segment.startedAt) / segment.duration);
     if (segment.type === "swap" || segment.type === "invalid") {
       const { first, second, board } = segment;
-      this.drawStaticMatchBoard(board, startX, startY, cell, [first, second]);
+      this.drawStaticMatchBoard(board, startX, startY, cell, [first, second], null, gemSize);
       let travel;
       if (segment.type === "invalid") {
         travel = progress < 0.5 ? easeInOut(progress * 2) : 1 - easeInOut((progress - 0.5) * 2);
@@ -3478,8 +4691,8 @@ class HarvestCollection {
       const secondX = startX + (second.col + (first.col - second.col) * travel) * cell + cell / 2;
       const secondY = startY + (second.row + (first.row - second.row) * travel) * cell + cell / 2;
       const bump = 1 + Math.sin(progress * Math.PI) * 0.08;
-      this.drawGem(board[first.row][first.col], firstX, firstY, 38, false, { scale: bump, glow: C.yellow });
-      this.drawGem(board[second.row][second.col], secondX, secondY, 38, false, { scale: bump, glow: C.yellow });
+      this.drawGem(board[first.row][first.col], firstX, firstY, gemSize, false, { scale: bump, glow: C.yellow });
+      this.drawGem(board[second.row][second.col], secondX, secondY, gemSize, false, { scale: bump, glow: C.yellow });
       return;
     }
     if (segment.type === "pop") {
@@ -3488,7 +4701,7 @@ class HarvestCollection {
         for (let col = 0; col < 7; col += 1) {
           const removed = removedKeys.has(`${row},${col}`);
           const burst = Math.sin(progress * Math.PI);
-          this.drawGem(segment.before[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, 38, false, {
+          this.drawGem(segment.before[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, gemSize, false, {
             scale: removed ? 1 + burst * 0.3 : 1,
             alpha: removed ? 1 - easeInOut(progress) : 1,
             rotation: removed ? burst * 0.18 : 0,
@@ -3533,12 +4746,12 @@ class HarvestCollection {
         const bounce = entry.isNew ? Math.sin(progress * Math.PI) * 0.04 : 0;
         if (entry.fromRow !== entry.toRow && progress < 0.88) {
           const trailRow = row - Math.sign(entry.toRow - entry.fromRow) * 0.2;
-          this.drawGem(entry.color, startX + entry.col * cell + cell / 2, startY + trailRow * cell + cell / 2, 38, false, {
+          this.drawGem(entry.color, startX + entry.col * cell + cell / 2, startY + trailRow * cell + cell / 2, gemSize, false, {
             alpha: 0.16 * (1 - progress),
             scale: 0.92
           });
         }
-        this.drawGem(entry.color, startX + entry.col * cell + cell / 2, startY + row * cell + cell / 2, 38, false, {
+        this.drawGem(entry.color, startX + entry.col * cell + cell / 2, startY + row * cell + cell / 2, gemSize, false, {
           scale: 1 + bounce
         });
       });
@@ -3550,7 +4763,7 @@ class HarvestCollection {
         for (let row = 0; row < 7; row += 1) {
           for (let col = 0; col < 7; col += 1) {
             const direction = (row + col) % 2 ? 1 : -1;
-            this.drawGem(segment.before[row][col], startX + col * cell + cell / 2 + direction * fade * 18, startY + row * cell + cell / 2, 38, false, {
+            this.drawGem(segment.before[row][col], startX + col * cell + cell / 2 + direction * fade * 18, startY + row * cell + cell / 2, gemSize, false, {
               alpha: 1 - fade,
               scale: 1 - fade * 0.3
             });
@@ -3560,7 +4773,7 @@ class HarvestCollection {
         const appear = easeOut((progress - 0.5) * 2);
         for (let row = 0; row < 7; row += 1) {
           for (let col = 0; col < 7; col += 1) {
-            this.drawGem(segment.after[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, 38, false, {
+            this.drawGem(segment.after[row][col], startX + col * cell + cell / 2, startY + row * cell + cell / 2, gemSize, false, {
               alpha: appear,
               scale: 0.65 + appear * 0.35
             });
@@ -3570,16 +4783,288 @@ class HarvestCollection {
     }
   }
 
+  spawnMergeTile(board = this.merge.board) {
+    const empty = [];
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 4; col += 1) {
+        if (board[row][col] == null) empty.push({ row, col });
+      }
+    }
+    if (!empty.length) return null;
+    const cell = empty[Math.floor(Math.random() * empty.length)];
+    board[cell.row][cell.col] = Math.random() < 0.88 ? 1 : 2;
+    return { ...cell, value: board[cell.row][cell.col] };
+  }
+
+  startMergeGame() {
+    this.merge = {
+      board: Array.from({ length: 4 }, () => Array(4).fill(null)),
+      score: 0,
+      maxValue: 1,
+      merges: 0,
+      rewardMerges: 0,
+      rewards: 0,
+      animation: null,
+      lockedUntil: 0
+    };
+    this.spawnMergeTile();
+    this.spawnMergeTile();
+  }
+
+  mergeLineCoordinates(direction, line) {
+    if (direction === "left") return Array.from({ length: 4 }, (_, col) => ({ row: line, col }));
+    if (direction === "right") return Array.from({ length: 4 }, (_, index) => ({ row: line, col: 3 - index }));
+    if (direction === "up") return Array.from({ length: 4 }, (_, row) => ({ row, col: line }));
+    return Array.from({ length: 4 }, (_, index) => ({ row: 3 - index, col: line }));
+  }
+
+  hasMergeMove(board = this.merge.board) {
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 4; col += 1) {
+        if (board[row][col] == null) return true;
+        if (row < 3 && board[row][col] === board[row + 1][col]) return true;
+        if (col < 3 && board[row][col] === board[row][col + 1]) return true;
+      }
+    }
+    return false;
+  }
+
+  rescueMergeBoard() {
+    const cells = [];
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 4; col += 1) {
+        if (this.merge.board[row][col] != null) {
+          cells.push({ row, col, value: this.merge.board[row][col] });
+        }
+      }
+    }
+    cells.sort((a, b) => a.value - b.value);
+    cells.slice(0, 4).forEach((cell) => {
+      this.merge.board[cell.row][cell.col] = null;
+    });
+    this.spawnMergeTile();
+    this.spawnMergeTile();
+    this.showToast("菜篮已自动腾出低级格子，可以继续合成", "normal", 1800);
+  }
+
+  moveMerge(direction) {
+    if (!this.merge || this.now() < this.merge.lockedUntil) return;
+    const before = this.merge.board.map((row) => [...row]);
+    const after = Array.from({ length: 4 }, () => Array(4).fill(null));
+    const movements = [];
+    const mergeEvents = [];
+    let gained = 0;
+
+    for (let line = 0; line < 4; line += 1) {
+      const coordinates = this.mergeLineCoordinates(direction, line);
+      const entries = coordinates
+        .map((cell) => ({ ...cell, value: before[cell.row][cell.col] }))
+        .filter((cell) => cell.value != null);
+      let writeIndex = 0;
+      for (let index = 0; index < entries.length; index += 1) {
+        const current = entries[index];
+        const target = coordinates[writeIndex];
+        if (entries[index + 1]?.value === current.value) {
+          const next = entries[index + 1];
+          const value = current.value + 1;
+          after[target.row][target.col] = value;
+          movements.push({ ...current, toRow: target.row, toCol: target.col, merged: true });
+          movements.push({ ...next, toRow: target.row, toCol: target.col, merged: true });
+          mergeEvents.push({ row: target.row, col: target.col, value });
+          gained += 2 ** value;
+          index += 1;
+        } else {
+          after[target.row][target.col] = current.value;
+          movements.push({ ...current, toRow: target.row, toCol: target.col, merged: false });
+        }
+        writeIndex += 1;
+      }
+    }
+
+    const changed = before.some((row, rowIndex) => row.some((value, colIndex) => value !== after[rowIndex][colIndex]));
+    if (!changed) {
+      this.showToast("这个方向已经没有可合并的格子", "normal", 900);
+      return;
+    }
+
+    this.merge.board = after;
+    this.merge.score += gained;
+    this.merge.merges += mergeEvents.length;
+    this.merge.rewardMerges += mergeEvents.length + (mergeEvents.length >= 2 ? 1 : 0);
+    this.merge.maxValue = Math.max(
+      this.merge.maxValue,
+      ...after.flat().filter((value) => value != null)
+    );
+    const spawned = this.spawnMergeTile();
+    const startedAt = this.now();
+    this.merge.animation = {
+      before,
+      after: this.merge.board.map((row) => [...row]),
+      movements,
+      mergeEvents,
+      spawned,
+      startedAt,
+      until: startedAt + 300
+    };
+    this.merge.lockedUntil = startedAt + 300;
+
+    while (this.merge.rewardMerges >= 8) {
+      const result = Core.claimMiniMilestone(this.state, "match3");
+      this.merge.rewardMerges -= 8;
+      this.merge.rewards += result.reward.amount;
+      this.showToast(
+        `合成里程碑：订单印章 +${result.reward.amount}${this.miniGiftLabel(result.bonus)}`,
+        "good",
+        result.bonus ? 2600 : 1800
+      );
+    }
+    if (mergeEvents.length) this.advanceFestival("match3", mergeEvents.length * 3);
+    if (!this.hasMergeMove()) this.rescueMergeBoard();
+    this.save(true);
+    this.render();
+  }
+
+  drawMergeTile(value, x, y, size, options = {}) {
+    if (value == null) return;
+    const style = MERGE_TILES[Math.min(MERGE_TILES.length - 1, value - 1)];
+    this.ctx.save();
+    this.ctx.globalAlpha = options.alpha ?? 1;
+    this.ctx.translate(x, y);
+    const scale = options.scale ?? 1;
+    this.ctx.scale(scale, scale);
+    if (options.glow) {
+      this.ctx.shadowColor = options.glow;
+      this.ctx.shadowBlur = 10;
+    }
+    this.rounded(-size / 2 + 3, -size / 2 + 4, size, size, 7, "rgba(52,70,74,0.16)");
+    this.rounded(-size / 2, -size / 2, size, size, 7, style.color, C.ink, 2);
+    this.rounded(-size / 2 + 5, -size / 2 + 5, size - 10, 8, 3, "rgba(255,255,255,0.32)");
+    this.text(style.label, 0, -13, 18, style.ink, "center", 900);
+    this.text(String(2 ** value), 0, 10, 15, C.white, "center", 900);
+    this.text(style.name, 0, 27, 9, style.ink, "center", 800);
+    this.ctx.restore();
+  }
+
+  drawMergeBoard(startX, startY, cell) {
+    const animation = this.merge.animation?.until > this.frameNow ? this.merge.animation : null;
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 4; col += 1) {
+        this.rounded(startX + col * cell + 3, startY + row * cell + 3, cell - 6, cell - 6, 6, "#f8efca", C.paper2, 1);
+      }
+    }
+    if (!animation) {
+      for (let row = 0; row < 4; row += 1) {
+        for (let col = 0; col < 4; col += 1) {
+          this.drawMergeTile(
+            this.merge.board[row][col],
+            startX + col * cell + cell / 2,
+            startY + row * cell + cell / 2,
+            cell - 16
+          );
+        }
+      }
+      return;
+    }
+
+    const progress = clamp01((this.frameNow - animation.startedAt) / (animation.until - animation.startedAt));
+    if (progress < 0.62) {
+      const travel = easeInOut(progress / 0.62);
+      animation.movements.forEach((entry) => {
+        const x = startX + (entry.col + (entry.toCol - entry.col) * travel) * cell + cell / 2;
+        const y = startY + (entry.row + (entry.toRow - entry.row) * travel) * cell + cell / 2;
+        this.drawMergeTile(entry.value, x, y, cell - 16, {
+          scale: entry.merged ? 1 - travel * 0.08 : 1
+        });
+      });
+      return;
+    }
+
+    const appear = easeOut((progress - 0.62) / 0.38);
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 4; col += 1) {
+        const merged = animation.mergeEvents.some((entry) => entry.row === row && entry.col === col);
+        const spawned = animation.spawned?.row === row && animation.spawned?.col === col;
+        this.drawMergeTile(
+          this.merge.board[row][col],
+          startX + col * cell + cell / 2,
+          startY + row * cell + cell / 2,
+          cell - 16,
+          {
+            scale: merged ? 0.72 + appear * 0.38 : spawned ? appear : 1,
+            glow: merged ? C.yellow : null
+          }
+        );
+      }
+    }
+  }
+
+  drawMergeGame() {
+    if (!this.merge) this.startMergeGame();
+    this.text("田园合成", 22, 151, 18, C.ink, "left", 900);
+    this.drawPuzzleTabs();
+    this.rounded(20, 169, 920, 43, 6, C.paper, C.ink, 2);
+    this.text(`得分 ${this.merge.score}`, 42, 191, 13, C.ink, "left", 900);
+    this.text(`最高 ${2 ** this.merge.maxValue}`, 178, 191, 12, C.coralDark, "left", 800);
+    this.text(`印章 ${this.merge.rewardMerges}/8 次`, 306, 191, 11, C.greenDark, "left", 800);
+    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 470, 191, 11, C.ink, "left", 800);
+
+    const startX = 58;
+    const startY = 225;
+    const cell = 88;
+    this.rounded(startX - 12, startY - 12, cell * 4 + 24, cell * 4 + 24, 7, C.paper2, C.ink, 3);
+    this.drawMergeBoard(startX, startY, cell);
+
+    this.rounded(442, 223, 498, 378, 7, C.cream, C.ink, 2);
+    this.text("成长图谱", 466, 251, 15, C.ink, "left", 900);
+    for (let index = 0; index < 6; index += 1) {
+      const x = 474 + index * 72;
+      this.drawMergeTile(index + 1, x, 292, 54, { alpha: index + 1 <= this.merge.maxValue + 1 ? 1 : 0.4 });
+      if (index < 5) this.text("›", x + 36, 292, 17, C.inkSoft, "center", 900);
+    }
+    this.line(464, 334, 918, 334, C.paper2, 2);
+    this.text("滑动方向", 466, 359, 13, C.ink, "left", 900);
+    this.button("↑", 740, 348, 56, 45, "merge-move", { direction: "up" }, { fill: C.greenSoft, size: 20 });
+    this.button("←", 676, 399, 56, 45, "merge-move", { direction: "left" }, { fill: C.paper, size: 20 });
+    this.button("↓", 740, 399, 56, 45, "merge-move", { direction: "down" }, { fill: C.greenSoft, size: 20 });
+    this.button("→", 804, 399, 56, 45, "merge-move", { direction: "right" }, { fill: C.paper, size: 20 });
+    this.rounded(464, 470, 454, 104, 6, C.paper, C.ink, 1);
+    this.text("循环奖励", 482, 492, 12, C.ink, "left", 900);
+    this.text(`再合成 ${8 - this.merge.rewardMerges} 次：订单印章`, 482, 518, 11, C.greenDark, "left", 800);
+    this.text(
+      `庆典益智：${this.state.festival.match3 ? "本轮已完成" : `${this.state.festivalProgress.match3}/${this.state.festivalGoals.match3} 格`}`,
+      482,
+      543,
+      11,
+      C.coralDark,
+      "left",
+      800
+    );
+    this.text(`本次已领取印章 ${this.merge.rewards}`, 482, 563, 9, C.inkSoft, "left", 700);
+  }
+
+  drawPuzzleTabs() {
+    this.button("消消乐", 730, 137, 92, 27, "puzzle-mode", { mode: "match3" }, {
+      fill: this.puzzleMode === "match3" ? C.coral : C.paper,
+      color: this.puzzleMode === "match3" ? C.white : C.ink,
+      size: 10
+    });
+    this.button("田园合成", 830, 137, 102, 27, "puzzle-mode", { mode: "merge" }, {
+      fill: this.puzzleMode === "merge" ? C.coral : C.paper,
+      color: this.puzzleMode === "merge" ? C.white : C.ink,
+      size: 10
+    });
+  }
+
   drawMatch3() {
     if (!this.match3) this.startMatch3Round();
-    const targetCrop = Core.CROPS[this.match3.targetColor];
+    const targetTile = MATCH_TILES[this.match3.targetColor];
     this.text("订单消消乐", 22, 151, 18, C.ink, "left", 900);
-    this.text("交换相邻蔬菜，三枚以上连成一线", 142, 151, 10, C.greenDark, "left", 700);
+    this.drawPuzzleTabs();
     this.rounded(20, 169, 920, 43, 6, C.paper, C.ink, 2);
     this.text(`得分 ${this.match3.score}`, 42, 191, 13, C.ink, "left", 900);
     this.text(`连锁 ×${this.match3.combo}`, 178, 191, 12, C.coralDark, "left", 800);
-    this.text(`最佳 ×${this.match3.bestCombo}`, 306, 191, 12, C.ink, "left", 800);
-    this.text(`本次印章 +${this.match3.rewards}`, 434, 191, 11, C.greenDark, "left", 800);
+    this.text(`装箱 ${this.match3.collected}/${this.match3.target}`, 306, 191, 11, C.ink, "left", 800);
+    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 446, 191, 11, C.greenDark, "left", 800);
     this.button("重排 ☀2", 818, 175, 104, 30, "match-shuffle", {}, { fill: C.yellowSoft, size: 11 });
 
     const startX = 58;
@@ -3597,22 +5082,120 @@ class HarvestCollection {
     this.text("当前装箱里程碑", 498, 250, 15, C.ink, "left", 900);
     this.rounded(498, 270, 422, 112, 6, C.paper, C.ink, 1);
     this.drawGem(this.match3.targetColor, 548, 327, 58);
-    this.text(targetCrop.name, 602, 298, 15, C.ink, "left", 900);
+    this.text(targetTile.name, 602, 298, 15, C.ink, "left", 900);
     this.text("集满后立即获得订单印章", 602, 320, 10, C.greenDark, "left", 800);
     this.rect(602, 341, 290, 14, C.paper2, C.ink, 1);
     this.rect(602, 341, 290 * Math.min(1, this.match3.collected / this.match3.target), 14, C.green);
     this.text(`${this.match3.collected} / ${this.match3.target}`, 747, 370, 11, C.ink, "center", 900);
-    this.line(498, 401, 920, 401, C.paper2, 2);
-    this.text("棋子图鉴", 498, 423, 13, C.ink, "left", 900);
+    this.text(
+      `庆典进度：${this.state.festival.match3 ? "本轮已完成" : `${this.state.festivalProgress.match3}/${this.state.festivalGoals.match3} 格`}`,
+      498,
+      397,
+      10,
+      C.greenDark,
+      "left",
+      800
+    );
+    this.line(498, 409, 920, 409, C.paper2, 2);
+    this.text("八种棋子图鉴 · 每轮上场七种", 498, 430, 12, C.ink, "left", 900);
     MATCH_TILES.forEach((tile, index) => {
-      const col = index % 3;
-      const row = Math.floor(index / 3);
-      const x = 500 + col * 140;
-      const y = 444 + row * 67;
-      this.rounded(x, y, 128, 54, 5, row % 2 ? C.paper : C.paper2, C.ink, 1);
-      this.drawGem(index, x + 28, y + 27, 34);
-      this.text(Core.CROPS[index].name, x + 52, y + 27, 11, C.ink, "left", 800);
+      const col = index % 4;
+      const row = Math.floor(index / 4);
+      const x = 500 + col * 104;
+      const y = 445 + row * 65;
+      const active = this.match3.palette.includes(index);
+      this.rounded(x, y, 96, 52, 5, active ? (row % 2 ? C.paper : C.paper2) : "#e4e1cf", C.ink, 1);
+      this.drawGem(index, x + 25, y + 26, 32, false, { alpha: active ? 1 : 0.45 });
+      this.text(tile.name, x + 46, y + 26, 9, active ? C.ink : C.lock, "left", 800);
     });
+  }
+
+  drawMobilePuzzleTabs() {
+    this.button("消消乐", 18, 151, 294, 40, "puzzle-mode", { mode: "match3" }, {
+      fill: this.puzzleMode === "match3" ? C.coral : C.paper,
+      color: this.puzzleMode === "match3" ? C.white : C.ink,
+      size: 11
+    });
+    this.button("田园合成", 328, 151, 294, 40, "puzzle-mode", { mode: "merge" }, {
+      fill: this.puzzleMode === "merge" ? C.coral : C.paper,
+      color: this.puzzleMode === "merge" ? C.white : C.ink,
+      size: 11
+    });
+  }
+
+  drawMobileMatch3() {
+    if (!this.match3) this.startMatch3Round();
+    const targetTile = MATCH_TILES[this.match3.targetColor];
+    this.drawMobileTitle("益智屋", "无步数限制，随时继续");
+    this.drawMobilePuzzleTabs();
+    this.rounded(18, 200, 604, 52, 6, C.paper, C.ink, 2);
+    this.drawGem(this.match3.targetColor, 48, 226, 34);
+    this.text(`${targetTile.name} ${this.match3.collected}/${this.match3.target}`, 74, 216, 11, C.ink, "left", 900);
+    this.text(`得分 ${this.match3.score} · 连锁 ×${this.match3.combo}`, 74, 238, 9, C.greenDark, "left", 800);
+    this.text(`印章里程碑 · 礼袋 ${this.state.miniGiftProgress}/3`, 342, 226, 9, C.coralDark, "center", 800);
+    this.button("重排 ☀2", 512, 208, 98, 36, "match-shuffle", {}, { fill: C.yellowSoft, size: 9 });
+
+    const startX = 47;
+    const startY = 264;
+    const cell = 78;
+    this.rounded(startX - 11, startY - 11, cell * 7 + 22, cell * 7 + 22, 7, C.paper2, C.ink, 3);
+    this.drawMatchBoardCells(startX, startY, cell);
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.rect(startX, startY, cell * 7, cell * 7);
+    this.ctx.clip();
+    this.drawMatchAnimation(startX, startY, cell, 54);
+    this.ctx.restore();
+
+    this.rounded(18, 824, 604, 54, 6, C.cream, C.ink, 2);
+    this.text(
+      `庆典益智 ${this.state.festival.match3 ? "本轮已完成" : `${this.state.festivalProgress.match3}/${this.state.festivalGoals.match3} 格`}`,
+      34,
+      851,
+      10,
+      C.greenDark,
+      "left",
+      900
+    );
+    this.text("集满目标立即获得订单印章", 606, 851, 9, C.inkSoft, "right", 700);
+  }
+
+  drawMobileMerge() {
+    if (!this.merge) this.startMergeGame();
+    this.drawMobileTitle("益智屋", "滑动或点击方向，持续合成");
+    this.drawMobilePuzzleTabs();
+    this.rounded(18, 200, 604, 52, 6, C.paper, C.ink, 2);
+    this.text(`得分 ${this.merge.score}`, 34, 226, 11, C.ink, "left", 900);
+    this.text(`最高 ${2 ** this.merge.maxValue}`, 174, 226, 10, C.coralDark, "left", 800);
+    this.text(`印章 ${this.merge.rewardMerges}/8 次`, 318, 226, 10, C.greenDark, "left", 800);
+    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 500, 226, 10, C.ink, "left", 800);
+
+    const startX = 68;
+    const startY = 266;
+    const cell = 126;
+    this.rounded(startX - 12, startY - 12, cell * 4 + 24, cell * 4 + 24, 7, C.paper2, C.ink, 3);
+    this.drawMergeBoard(startX, startY, cell);
+
+    const controls = [
+      ["←", "left", C.paper],
+      ["↑", "up", C.greenSoft],
+      ["↓", "down", C.greenSoft],
+      ["→", "right", C.paper]
+    ];
+    controls.forEach(([label, direction, fill], index) => {
+      this.button(label, 18 + index * 152, 786, 142, 44, "merge-move", { direction }, { fill, size: 20 });
+    });
+    this.rounded(18, 839, 604, 39, 6, C.cream, C.ink, 2);
+    this.text(
+      `庆典益智 ${this.state.festival.match3 ? "本轮已完成" : `${this.state.festivalProgress.match3}/${this.state.festivalGoals.match3} 格`}`,
+      34,
+      859,
+      10,
+      C.greenDark,
+      "left",
+      900
+    );
+    this.text("每合成 8 次获得订单印章", 606, 859, 9, C.inkSoft, "right", 700);
   }
 
   async togglePin() {
@@ -3636,7 +5219,10 @@ class HarvestCollection {
       if (hit.type === "nav") this.switchView(hit.view);
       else if (hit.type === "pin") this.togglePin();
       else if (hit.type === "plot") this.usePlot(hit.index);
-      else if (hit.type === "market-tab") this.marketTab = hit.tab;
+      else if (hit.type === "market-tab") {
+        this.marketTab = hit.tab;
+        this.mobileMarketPage = 0;
+      }
       else if (hit.type === "auto-toggle") {
         const type = hit.itemId;
         const enabled = !this.state.automationEnabled[type];
@@ -3658,12 +5244,16 @@ class HarvestCollection {
         const coinsBefore = this.state.coins;
         const result = Core.unlockPetGarden(this.state, this.now());
         if (result.ok) {
-          this.addActionEffect("ui-success", { x: 875, y: 211, color: C.coral, view: "market" }, 900);
+          this.addActionEffect("ui-success", { x: MOBILE_LAYOUT ? x : 875, y: MOBILE_LAYOUT ? y : 211, color: C.coral, view: "market" }, 900);
           this.addResourceEffect("coins", this.state.coins - coinsBefore);
         }
         this.showToast(result.ok ? "暖阳宠物园已解锁，欢迎领养第一只宠物" : result.reason, result.ok ? "good" : "bad", 2400);
       } else if (hit.type === "pet-tab") {
         this.petShopTab = hit.tab;
+        this.mobilePetPage = 0;
+      } else if (hit.type === "mobile-page") {
+        if (hit.target === "market") this.mobileMarketPage = Math.max(0, this.mobileMarketPage + hit.delta);
+        if (hit.target === "pets") this.mobilePetPage = Math.max(0, this.mobilePetPage + hit.delta);
       } else if (hit.type === "pet-select") {
         if (this.state.petGarden.pets[hit.petId]?.owned) {
           this.state.petGarden.selectedPet = hit.petId;
@@ -3733,8 +5323,8 @@ class HarvestCollection {
         if (result.ok) {
           const cropIndex = Core.CROPS.findIndex((crop) => crop.id === hit.cropId);
           this.addActionEffect("ui-success", {
-            x: 884,
-            y: 183 + cropIndex * 47,
+            x: MOBILE_LAYOUT ? x : 884,
+            y: MOBILE_LAYOUT ? y : 183 + cropIndex * 47,
             color: C.green,
             view: "farm"
           }, 650);
@@ -3771,7 +5361,7 @@ class HarvestCollection {
         const ticketsBefore = this.state.seedTickets;
         const result = Core.exchangeSeedTicket(this.state);
         if (result.ok) {
-          this.addActionEffect("ui-success", { x: 884, y: 201, color: C.coral, view: "market" }, 720);
+          this.addActionEffect("ui-success", { x: MOBILE_LAYOUT ? x : 884, y: MOBILE_LAYOUT ? y : 201, color: C.coral, view: "market" }, 720);
           this.addResourceEffect("seedTickets", this.state.seedTickets - ticketsBefore);
         }
         this.showToast(result.ok ? `兑换到 ${result.crop.name}种子 ×${result.amount}` : result.reason, result.ok ? "good" : "bad");
@@ -3780,7 +5370,7 @@ class HarvestCollection {
         const coinsBefore = this.state.coins;
         const result = Core.unlockNextPlot(this.state);
         if (result.ok) {
-          this.addActionEffect("ui-success", { x: 866, y: 302, color: C.green, view: "market" }, 760);
+          this.addActionEffect("ui-success", { x: MOBILE_LAYOUT ? x : 866, y: MOBILE_LAYOUT ? y : 302, color: C.green, view: "market" }, 760);
           this.addActionEffect("plot-unlock", { plotIndex, view: "farm" }, 950);
           this.addResourceEffect("coins", this.state.coins - coinsBefore);
         }
@@ -3799,13 +5389,23 @@ class HarvestCollection {
       else if (hit.type === "zuma-slow") this.useZumaSlow();
       else if (hit.type === "zuma-bomb") this.useZumaBomb();
       else if (hit.type === "zuma-swap") this.swapZumaColor();
+      else if (hit.type === "puzzle-mode") {
+        this.puzzleMode = hit.mode;
+        this.toast = null;
+      }
+      else if (hit.type === "merge-move") this.moveMerge(hit.direction);
       else if (hit.type === "match-cell") this.clickMatchCell(hit.row, hit.col);
       else if (hit.type === "match-shuffle") this.shuffleMatch3();
       this.save(true);
       this.render();
       return;
     }
-    if (this.state.view === "zuma" && !rightButton && y > 205) this.shootZuma(x, y);
+    if (
+      this.state.view === "zuma"
+      && !rightButton
+      && y > (MOBILE_LAYOUT ? 204 : 205)
+      && (!MOBILE_LAYOUT || y < 790)
+    ) this.shootZuma(x, y);
     if (this.state.view === "zuma" && rightButton) this.swapZumaColor();
   }
 
@@ -3825,7 +5425,8 @@ class HarvestCollection {
       } : null
     }));
     const payload = {
-      coordinateSystem: "960x640，原点左上，x向右，y向下",
+      coordinateSystem: `${WIDTH}x${HEIGHT}，原点左上，x向右，y向下`,
+      layout: MOBILE_LAYOUT ? "mobile-portrait" : "desktop-landscape",
       view: this.state.view,
       resources: {
         coins: this.state.coins,
@@ -3846,6 +5447,12 @@ class HarvestCollection {
         orders: this.state.orders.map((order) => ({ ...order, stocked: this.state.produce[order.cropId] }))
       },
       festival: this.state.festival,
+      festivalRound: {
+        number: this.state.festivalCount + 1,
+        progress: this.state.festivalProgress,
+        goals: this.state.festivalGoals,
+        giftProgress: this.state.miniGiftProgress
+      },
       selected: this.state.selected,
       activeEffects: this.actionEffects.map((effect) => effect.type)
     };
@@ -3854,6 +5461,9 @@ class HarvestCollection {
         score: this.link.score,
         remaining: this.link.board.flat().filter((value) => value != null).length,
         clearedBoards: this.link.clearedBoards,
+        flowMode: this.link.flowMode,
+        matchedPairs: this.link.matchedPairs,
+        rewardPairs: this.link.rewardPairs,
         rewards: this.link.rewards,
         selected: this.link.selected,
         animating: this.now() < this.link.lockedUntil
@@ -3864,7 +5474,10 @@ class HarvestCollection {
         score: this.zuma.score,
         chainLength: this.zuma.balls.length,
         totalCleared: this.zuma.totalCleared,
-        nextRewardScore: this.zuma.nextRewardScore,
+        rewardCleared: this.zuma.rewardCleared,
+        nextRewardClears: this.zuma.nextRewardClears,
+        ballSpacingPixels: 29,
+        trackLength: Math.round(this.ensureZumaPathCache().length),
         rewards: this.zuma.rewards,
         currentColor: this.zuma.currentColor,
         nextColor: this.zuma.nextColor
@@ -3872,6 +5485,7 @@ class HarvestCollection {
     }
     if (this.state.view === "match3" && this.match3) {
       payload.match3 = {
+        mode: this.puzzleMode,
         score: this.match3.score,
         objective: `${this.match3.collected}/${this.match3.target}`,
         milestones: this.match3.milestones,
@@ -3879,6 +5493,17 @@ class HarvestCollection {
         selected: this.match3.selected,
         animation: this.activeMatchSegment()?.type || null
       };
+      if (this.puzzleMode === "merge" && this.merge) {
+        payload.merge = {
+          board: this.merge.board,
+          score: this.merge.score,
+          maxValue: this.merge.maxValue,
+          merges: this.merge.merges,
+          rewardMerges: this.merge.rewardMerges,
+          rewards: this.merge.rewards,
+          animating: this.now() < this.merge.lockedUntil
+        };
+      }
     }
     if (this.state.view === "pets") {
       const garden = this.state.petGarden;
@@ -3931,13 +5556,15 @@ class MainScene extends Phaser.Scene {
         appInstance.link = null;
         appInstance.zuma = null;
         appInstance.match3 = null;
+        appInstance.merge = null;
+        appInstance.puzzleMode = "match3";
         appInstance.actionEffects = [];
         appInstance.maturePlots = new Set();
         appInstance.switchView("farm");
         appInstance.save(true);
       },
       setView: (view) => appInstance.switchView(view),
-      completeMini: (type) => Core.claimMiniMilestone(appInstance.state, type),
+      completeMini: (type) => Core.completeMiniGame(appInstance.state, type),
       forceMature: () => {
         appInstance.state.plots.forEach((plot) => {
           if (plot.crop) plot.crop.finishAt = appInstance.now() - 1;
