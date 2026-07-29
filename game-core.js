@@ -11,12 +11,12 @@
   const PET_FOOD_PRODUCE_COST = 2;
 
   const CROPS = [
-    { id: "radish", name: "萝卜", level: 1, duration: 240_000, seedPrice: 5, sellPrice: 9, yield: 1, color: "#f4c8c4" },
-    { id: "cabbage", name: "白菜", level: 1, duration: 480_000, seedPrice: 8, sellPrice: 15, yield: 1, color: "#78c978" },
-    { id: "potato", name: "土豆", level: 2, duration: 900_000, seedPrice: 13, sellPrice: 10, yield: 2, color: "#d5a96e" },
-    { id: "tomato", name: "番茄", level: 3, duration: 1_500_000, seedPrice: 22, sellPrice: 14, yield: 2, color: "#ef6b62" },
-    { id: "corn", name: "玉米", level: 4, duration: 2_400_000, seedPrice: 38, sellPrice: 23, yield: 2, color: "#efcf55" },
-    { id: "strawberry", name: "草莓", level: 5, duration: 3_600_000, seedPrice: 65, sellPrice: 26, yield: 3, color: "#df4560" }
+    { id: "radish", name: "萝卜", level: 1, duration: 120_000, seedPrice: 5, sellPrice: 9, yield: 1, color: "#f4c8c4" },
+    { id: "cabbage", name: "白菜", level: 1, duration: 240_000, seedPrice: 8, sellPrice: 15, yield: 1, color: "#78c978" },
+    { id: "potato", name: "土豆", level: 2, duration: 420_000, seedPrice: 13, sellPrice: 10, yield: 2, color: "#d5a96e" },
+    { id: "tomato", name: "番茄", level: 3, duration: 720_000, seedPrice: 22, sellPrice: 14, yield: 2, color: "#ef6b62" },
+    { id: "corn", name: "玉米", level: 4, duration: 1_200_000, seedPrice: 38, sellPrice: 23, yield: 2, color: "#efcf55" },
+    { id: "strawberry", name: "草莓", level: 5, duration: 1_800_000, seedPrice: 65, sellPrice: 26, yield: 3, color: "#df4560" }
   ];
 
   const LAND_COSTS = [100, 160, 250, 380, 560, 800];
@@ -74,7 +74,7 @@
 
   const RESEARCH = [
     { id: "growth", name: "四季栽培", description: "永久成长速度 +4%", max: 5 },
-    { id: "mini", name: "游园手艺", description: "小游戏奖励永久增加", max: 5 },
+    { id: "mini", name: "游园手艺", description: "小游戏里程碑奖励增加", max: 5 },
     { id: "orders", name: "熟客名册", description: "订单奖励永久 +6%", max: 5 }
   ];
 
@@ -766,23 +766,23 @@
     return { ok: true, amount, compost };
   }
 
-  function completeMiniGame(state, type, score, success = true) {
-    const safeScore = Math.max(0, Math.floor(score));
+  function claimMiniMilestone(state, type) {
     const rewardLevel = state.research.mini || 0;
     let reward;
     if (type === "link") {
-      const amount = 2 + Math.floor(safeScore / 700) + Math.floor(rewardLevel / 2);
+      const amount = 2 + Math.floor(rewardLevel / 2);
       state.seedTickets += amount;
       state.stats.linkRounds += 1;
       reward = { resource: "seedTickets", amount };
     } else if (type === "zuma") {
-      const amount = 2 + Math.floor(safeScore / 900) + Math.floor(rewardLevel / 2);
+      const amount = 1 + Math.floor(rewardLevel / 2);
+      const blessing = 1 + Math.floor(rewardLevel / 3);
       state.compost += amount;
-      state.pestBlessing += 2 + Math.floor(rewardLevel / 2);
+      state.pestBlessing += blessing;
       state.stats.zumaRounds += 1;
-      reward = { resource: "compost", amount, blessing: 2 + Math.floor(rewardLevel / 2) };
+      reward = { resource: "compost", amount, blessing };
     } else if (type === "match3") {
-      const amount = 1 + Math.floor(safeScore / 1200) + Math.floor(rewardLevel / 3);
+      const amount = 1 + Math.floor(rewardLevel / 3);
       state.orderSeals += amount;
       state.stats.match3Rounds += 1;
       reward = { resource: "orderSeals", amount };
@@ -790,7 +790,7 @@
       return { ok: false, reason: "未知小游戏" };
     }
     let festival = null;
-    if (success) state.festival[type] = true;
+    state.festival[type] = true;
     if (state.festival.link && state.festival.zuma && state.festival.match3) {
       const coins = 120 + state.level * 25 + state.festivalCount * 10;
       state.festival = { link: false, zuma: false, match3: false };
@@ -800,6 +800,10 @@
       festival = { coins, stars: 1, count: state.festivalCount };
     }
     return { ok: true, reward, festival };
+  }
+
+  function completeMiniGame(state, type) {
+    return claimMiniMilestone(state, type);
   }
 
   function spendSun(state, amount) {
@@ -870,6 +874,7 @@
     buyPetFacility,
     interactPet,
     claimPetIncome,
+    claimMiniMilestone,
     completeMiniGame,
     spendSun,
     formatDuration

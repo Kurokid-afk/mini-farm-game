@@ -44,9 +44,9 @@ function testLinkedRewardsAndFestival() {
     seals: state.orderSeals,
     coins: state.coins
   };
-  assert.equal(Core.completeMiniGame(state, "link", 1000, true).ok, true);
-  assert.equal(Core.completeMiniGame(state, "zuma", 1000, true).ok, true);
-  const final = Core.completeMiniGame(state, "match3", 1200, true);
+  assert.equal(Core.claimMiniMilestone(state, "link").ok, true);
+  assert.equal(Core.claimMiniMilestone(state, "zuma").ok, true);
+  const final = Core.claimMiniMilestone(state, "match3");
   assert.ok(state.seedTickets > before.tickets);
   assert.ok(state.compost > before.compost);
   assert.ok(state.orderSeals > before.seals);
@@ -54,6 +54,10 @@ function testLinkedRewardsAndFestival() {
   assert.equal(state.stars, 1);
   assert.ok(state.coins > before.coins);
   assert.deepEqual(state.festival, { link: false, zuma: false, match3: false });
+}
+
+function testBalancedCropDurations() {
+  assert.deepEqual(Core.CROPS.map((crop) => crop.duration / 60_000), [2, 4, 7, 12, 20, 30]);
 }
 
 function testPerPlotAutomationAndSoil() {
@@ -142,6 +146,7 @@ function testCropRotationDepth() {
 testFarmLoop();
 testOrderEconomy();
 testLinkedRewardsAndFestival();
+testBalancedCropDurations();
 testPerPlotAutomationAndSoil();
 testOfflineSaveMigration();
 testPetGardenLoop();

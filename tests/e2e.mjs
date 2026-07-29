@@ -226,14 +226,14 @@ await clickLogical(88, 279);
 
 await page.evaluate(() => window.__uuHarvest.setView("link"));
 await screenshot("04-link.png");
-const linkSecondsBeforePause = JSON.parse(await page.evaluate(() => window.render_game_to_text())).link.seconds;
+const linkRemainingBeforeSwitch = JSON.parse(await page.evaluate(() => window.render_game_to_text())).link.remaining;
 await page.evaluate(() => {
   window.__uuHarvest.setView("farm");
   window.advanceTime(5000);
   window.__uuHarvest.setView("link");
 });
-const linkSecondsAfterPause = JSON.parse(await page.evaluate(() => window.render_game_to_text())).link.seconds;
-assert.ok(Math.abs(linkSecondsAfterPause - linkSecondsBeforePause) <= 1);
+const linkRemainingAfterSwitch = JSON.parse(await page.evaluate(() => window.render_game_to_text())).link.remaining;
+assert.equal(linkRemainingAfterSwitch, linkRemainingBeforeSwitch);
 const linkMove = await page.evaluate(() => window.__uuHarvest.app.findLinkMove());
 assert.ok(linkMove);
 for (const cell of linkMove) await clickLogical(185 + cell.col * 74 + 33, 224 + cell.row * 66 + 28);
@@ -245,6 +245,19 @@ await screenshot("04b-link-clear-animation.png");
 await page.evaluate(() => window.advanceTime(180));
 await screenshot("04c-link-particles-animation.png");
 await page.evaluate(() => window.advanceTime(260));
+await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  app.link.board = Array.from({ length: app.link.rows }, () => Array(app.link.cols).fill(null));
+  app.link.board[0][0] = 0;
+  app.link.board[0][1] = 0;
+});
+await clickLogical(185 + 33, 224 + 28);
+await clickLogical(185 + 74 + 33, 224 + 28);
+await page.evaluate(() => window.advanceTime(500));
+textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+assert.equal(textState.link.remaining, 40);
+assert.equal(textState.link.clearedBoards, 1);
+assert.ok(textState.link.rewards > 0);
 
 await page.evaluate(() => window.__uuHarvest.setView("zuma"));
 await clickLogical(480, 300);
@@ -269,7 +282,9 @@ const gapBefore = await page.evaluate(() => {
   ];
   app.zuma.projectiles = [];
   app.zuma.spawned = 7;
-  app.zuma.target = 7;
+  app.zuma.spawnTimer = 0;
+  app.zuma.score = 0;
+  app.zuma.nextRewardScore = 1500;
   app.resolveZumaMatches(3);
   const gap = app.zuma.gap;
   return app.zuma.balls[gap.frontEnd].p - app.zuma.balls[gap.tailStart].p - 0.034;
@@ -287,9 +302,31 @@ const chainAfterRollback = await page.evaluate(() => ({
   colors: window.__uuHarvest.app.zuma.balls.map((ball) => ball.color),
   gap: window.__uuHarvest.app.zuma.gap
 }));
-assert.deepEqual(chainAfterRollback.colors, [2]);
+assert.ok(chainAfterRollback.colors.length >= 1);
+assert.ok(chainAfterRollback.colors.every((color) => color === 2));
 assert.equal(chainAfterRollback.gap, null);
 await screenshot("05b-zuma-rollback-chain.png");
+const zumaMilestone = await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  app.zuma.score = 1490;
+  app.zuma.nextRewardScore = 1500;
+  app.zuma.balls = [
+    { color: 0, p: 0.2 },
+    { color: 0, p: 0.166 },
+    { color: 0, p: 0.132 },
+    { color: 2, p: 0.098 }
+  ];
+  const before = app.zuma.rewards;
+  app.resolveZumaMatches(1);
+  return {
+    rewardDelta: app.zuma.rewards - before,
+    nextRewardScore: app.zuma.nextRewardScore,
+    chainLength: app.zuma.balls.length
+  };
+});
+assert.ok(zumaMilestone.rewardDelta > 0);
+assert.equal(zumaMilestone.nextRewardScore, 3000);
+assert.ok(zumaMilestone.chainLength >= 1);
 
 await page.evaluate(() => window.__uuHarvest.setView("match3"));
 const invalidSwap = await page.evaluate(() => {
@@ -311,9 +348,9 @@ const invalidSwap = await page.evaluate(() => {
   return null;
 });
 assert.ok(invalidSwap);
-for (const cell of invalidSwap) await clickLogical(250 + cell.col * 54 + 27, 223 + cell.row * 54 + 27);
+for (const cell of invalidSwap) await clickLogical(58 + cell.col * 54 + 27, 223 + cell.row * 54 + 27);
 textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
-assert.equal(textState.match3.moves, 20);
+assert.equal("moves" in textState.match3, false);
 assert.equal(textState.match3.animation, "invalid");
 await page.evaluate(() => window.advanceTime(100));
 await screenshot("06a-match3-invalid-bounce.png");
@@ -338,9 +375,8 @@ const swap = await page.evaluate(() => {
   return null;
 });
 assert.ok(swap);
-for (const cell of swap) await clickLogical(250 + cell.col * 54 + 27, 223 + cell.row * 54 + 27);
+for (const cell of swap) await clickLogical(58 + cell.col * 54 + 27, 223 + cell.row * 54 + 27);
 textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
-assert.equal(textState.match3.moves, 19);
 assert.ok(textState.match3.score > 0);
 assert.ok(await page.evaluate(() => Boolean(window.__uuHarvest.app.findValidMatchSwap(window.__uuHarvest.app.match3.board))));
 assert.equal(textState.match3.animation, "swap");
@@ -366,13 +402,32 @@ await page.evaluate(() => {
   window.advanceTime(Math.max(0, app.match3.lockedUntil - app.now()) + 40);
 });
 await screenshot("06e-match3-settled.png");
+const matchMilestone = await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  const board = JSON.stringify(app.match3.board);
+  const score = app.match3.score;
+  app.match3.collected = app.match3.target;
+  app.match3.pendingMilestone = true;
+  app.match3.lockedUntil = app.now();
+  window.advanceTime(20);
+  return {
+    milestones: app.match3.milestones,
+    rewards: app.match3.rewards,
+    scoreKept: app.match3.score === score,
+    boardKept: JSON.stringify(app.match3.board) === board
+  };
+});
+assert.equal(matchMilestone.milestones, 1);
+assert.ok(matchMilestone.rewards > 0);
+assert.equal(matchMilestone.scoreKept, true);
+assert.equal(matchMilestone.boardKept, true);
 
 await page.evaluate(() => {
   const state = window.__uuHarvest.getState();
   state.festival = { link: false, zuma: false, match3: false };
-  window.__uuHarvest.completeMini("link", 1000);
-  window.__uuHarvest.completeMini("zuma", 1000);
-  window.__uuHarvest.completeMini("match3", 1300);
+  window.__uuHarvest.completeMini("link");
+  window.__uuHarvest.completeMini("zuma");
+  window.__uuHarvest.completeMini("match3");
 });
 state = await page.evaluate(() => window.__uuHarvest.getState());
 assert.ok(state.stars >= 1);
@@ -390,11 +445,17 @@ assert.ok(canvas.height >= 500);
 await page.evaluate(() => window.__uuHarvest.setView("link"));
 await page.waitForTimeout(120);
 await screenshot("09-link-small-window.png");
+await page.evaluate(() => window.__uuHarvest.setView("zuma"));
+await page.waitForTimeout(180);
+await screenshot("10-zuma-small-window.png");
+await page.evaluate(() => window.__uuHarvest.setView("match3"));
+await page.waitForTimeout(180);
+await screenshot("11-match3-small-window.png");
 await page.evaluate(() => window.__uuHarvest.setView("pets"));
 await page.waitForTimeout(180);
-await screenshot("10-pet-small-window.png");
+await screenshot("12-pet-small-window.png");
 assert.deepEqual(errors, []);
 
 await browser.close();
 devServer?.kill();
-console.log("farm actions, pixel pets, animated robots, link, zuma, match3, festival, and responsive UI passed");
+console.log("farm actions, compact pixel pets, endless minigames, milestone festival, and responsive UI passed");

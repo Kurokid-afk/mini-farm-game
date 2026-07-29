@@ -1,6 +1,6 @@
 {
   "name": "uu-harvest-collection",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "像素农场、宠物园与连连看、祖玛、消消乐联动的桌面合集",
   "main": "electron/main.cjs",
