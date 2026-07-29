@@ -2684,8 +2684,8 @@ class HarvestCollection {
 
   zumaPathPoint(progress) {
     const p = Math.max(0, Math.min(1, progress));
-    const xs = [62, 155, 285, 405, 545, 675, 795, 888];
-    const ys = [375, 268, 425, 286, 438, 278, 415, 334];
+    const xs = [44, 95, 185, 285, 370, 405, 350, 250, 155, 120, 185, 290, 400, 485, 555, 665, 760, 805, 765, 675, 600, 635, 725, 820, 905];
+    const ys = [405, 315, 255, 270, 330, 400, 470, 492, 460, 385, 325, 310, 350, 425, 475, 480, 430, 350, 275, 245, 305, 385, 410, 380, 330];
     return {
       x: Phaser.Math.Interpolation.CatmullRom(xs, p),
       y: Phaser.Math.Interpolation.CatmullRom(ys, p)
@@ -2695,8 +2695,8 @@ class HarvestCollection {
   startZumaRound() {
     const colors = [0, 1, 2, 3, 4];
     const balls = [];
-    for (let i = 0; i < 18; i += 1) {
-      balls.push({ color: colors[Math.floor(Math.random() * colors.length)], p: 0.34 - i * 0.034 });
+    for (let i = 0; i < 20; i += 1) {
+      balls.push({ color: colors[Math.floor(Math.random() * colors.length)], p: 0.4 - i * 0.034 });
     }
     this.zuma = {
       balls,
@@ -2777,11 +2777,17 @@ class HarvestCollection {
       this.zuma.combo = 0;
       return;
     }
+    const clearedPoints = balls.slice(left, right + 1).map((ball) => this.zumaPathPoint(ball.p));
     balls.splice(left, count);
     this.zuma.combo += 1;
     this.zuma.bestCombo = Math.max(this.zuma.bestCombo, this.zuma.combo);
     this.zuma.totalCleared += count;
     this.zuma.score += count * 110 * this.zuma.combo;
+    this.addActionEffect("zuma-pop", {
+      points: clearedPoints,
+      combo: this.zuma.combo,
+      view: "zuma"
+    }, 620);
     this.awardZumaMilestones();
     this.zuma.gap = left > 0 && left < balls.length
       ? { frontEnd: left - 1, tailStart: left }
@@ -2802,9 +2808,9 @@ class HarvestCollection {
       this.zuma.nextColor = this.randomZumaColor();
     }
     const slow = this.now() < this.zuma.slowUntil;
-    const speed = (0.016 + Math.min(0.006, this.zuma.score / 250_000)) * (slow ? 0.45 : 1);
+    const speed = (0.023 + Math.min(0.008, this.zuma.score / 180_000)) * (slow ? 0.45 : 1);
     this.zuma.spawnTimer += dt;
-    if (this.zuma.spawnTimer >= 1.15 && this.zuma.balls.length < 28) {
+    if (this.zuma.spawnTimer >= 0.92 && this.zuma.balls.length < 32) {
       this.zuma.spawnTimer = 0;
       const tailP = this.zuma.balls.length ? this.zuma.balls[this.zuma.balls.length - 1].p : -0.03;
       this.zuma.balls.push({ color: this.randomZumaColor(), p: Math.min(-0.03, tailP - 0.034) });
@@ -2842,6 +2848,10 @@ class HarvestCollection {
         });
         this.zuma.combo = 0;
         this.zuma.gap = null;
+        this.addActionEffect("zuma-barrier", {
+          ...this.zumaPathPoint(1),
+          view: "zuma"
+        }, 680);
         this.showToast(`仓库挡板拦下 ${removed} 颗，继续清理`, "normal", 1800);
       }
     }
@@ -2907,6 +2917,70 @@ class HarvestCollection {
     this.rect(x - 2, y - radius - 4, 4, 5, C.greenDark);
   }
 
+  drawZumaActionEffects() {
+    this.actionEffects
+      .filter((effect) => effect.view === "zuma" && ["zuma-pop", "zuma-barrier"].includes(effect.type))
+      .forEach((effect) => {
+        const progress = this.effectProgress(effect);
+        if (effect.type === "zuma-pop") {
+          effect.points.forEach((point, pointIndex) => {
+            this.ctx.save();
+            this.ctx.globalAlpha = 1 - progress;
+            this.ctx.beginPath();
+            this.ctx.arc(point.x, point.y, 8 + progress * 22, 0, Math.PI * 2);
+            this.ctx.strokeStyle = pointIndex % 2 ? C.yellow : C.coral;
+            this.ctx.lineWidth = Math.max(1, 4 * (1 - progress));
+            this.ctx.stroke();
+            this.ctx.restore();
+            for (let particle = 0; particle < 6; particle += 1) {
+              const angle = particle * Math.PI / 3 + pointIndex * 0.35;
+              const distance = easeOut(progress) * (18 + particle * 2);
+              const size = Math.max(1, 5 * (1 - progress));
+              this.rect(
+                point.x + Math.cos(angle) * distance - size / 2,
+                point.y + Math.sin(angle) * distance - size / 2,
+                size,
+                size,
+                particle % 2 ? C.yellow : C.coral
+              );
+            }
+          });
+          const center = effect.points[Math.floor(effect.points.length / 2)];
+          if (center) {
+            this.ctx.save();
+            this.ctx.globalAlpha = 1 - progress;
+            this.text(
+              `连锁 ×${effect.combo}`,
+              center.x,
+              center.y - 28 - progress * 20,
+              13 + Math.sin(progress * Math.PI) * 3,
+              C.coralDark,
+              "center",
+              900
+            );
+            this.ctx.restore();
+          }
+        } else {
+          for (let particle = 0; particle < 12; particle += 1) {
+            const angle = Math.PI * 0.6 + (particle / 11) * Math.PI * 0.8;
+            const distance = easeOut(progress) * (28 + (particle % 4) * 8);
+            const size = Math.max(1, 7 * (1 - progress));
+            this.rect(
+              effect.x + Math.cos(angle) * distance - size / 2,
+              effect.y + Math.sin(angle) * distance - size / 2,
+              size,
+              size,
+              particle % 2 ? C.yellow : C.coral
+            );
+          }
+          this.ctx.save();
+          this.ctx.globalAlpha = 1 - progress;
+          this.circle(effect.x, effect.y, 18 + progress * 28, null, C.yellow, Math.max(1, 5 * (1 - progress)));
+          this.ctx.restore();
+        }
+      });
+  }
+
   drawZuma() {
     if (!this.zuma) this.startZumaRound();
     this.text("田园祖玛", 22, 151, 18, C.ink, "left", 900);
@@ -2933,14 +3007,25 @@ class HarvestCollection {
       this.ctx.restore();
     }
 
-    this.ctx.beginPath();
-    for (let i = 0; i <= 160; i += 1) {
-      const point = this.zumaPathPoint(i / 160);
-      if (i === 0) this.ctx.moveTo(point.x, point.y);
-      else this.ctx.lineTo(point.x, point.y);
-    }
+    const traceTrack = (offsetY = 0) => {
+      this.ctx.beginPath();
+      for (let i = 0; i <= 220; i += 1) {
+        const point = this.zumaPathPoint(i / 220);
+        if (i === 0) this.ctx.moveTo(point.x, point.y + offsetY);
+        else this.ctx.lineTo(point.x, point.y + offsetY);
+      }
+    };
+    traceTrack(8);
+    this.ctx.strokeStyle = "rgba(117,70,60,0.55)";
+    this.ctx.lineWidth = 46;
+    this.ctx.lineCap = "round";
+    this.ctx.lineJoin = "round";
+    this.ctx.stroke();
+    traceTrack();
     this.ctx.strokeStyle = "rgba(52,70,74,0.34)";
     this.ctx.lineWidth = 43;
+    this.ctx.lineCap = "round";
+    this.ctx.lineJoin = "round";
     this.ctx.stroke();
     this.ctx.strokeStyle = C.paper2;
     this.ctx.lineWidth = 35;
@@ -2952,7 +3037,7 @@ class HarvestCollection {
     this.ctx.lineWidth = 2;
     this.ctx.stroke();
 
-    [0.1, 0.24, 0.39, 0.55, 0.71, 0.87].forEach((progress) => {
+    [0.05, 0.13, 0.21, 0.29, 0.37, 0.45, 0.53, 0.61, 0.69, 0.77, 0.85, 0.93].forEach((progress) => {
       const point = this.zumaPathPoint(progress);
       const ahead = this.zumaPathPoint(progress + 0.008);
       const angle = Math.atan2(ahead.y - point.y, ahead.x - point.x);
@@ -2980,6 +3065,7 @@ class HarvestCollection {
       this.drawZumaBall(ball.color, point.x, point.y, 15);
     }
     this.zuma.projectiles.forEach((projectile) => this.drawZumaBall(projectile.color, projectile.x, projectile.y, 11));
+    this.drawZumaActionEffects();
 
     this.rounded(387, 526, 284, 78, 7, "rgba(255,253,240,0.9)", C.ink, 2);
     this.circle(448, 565, 31, C.paper, C.ink, 3);
