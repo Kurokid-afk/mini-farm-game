@@ -45,7 +45,9 @@
 ## Android 版本
 
 - 使用 Android 原生 `Canvas`、触控事件和 `SharedPreferences` 独立实现，不使用 WebView，也不打包网页文件。
-- 使用同一套经营、奖励、动画和本地存档规则，界面按 `640 × 960` 逻辑尺寸适配各种竖屏。
+- 所有玩法、像素动物、宠物园背景和设施素材均随 APK 本地安装，不需要联网或额外下载资源。
+- 使用同一套经营、奖励、动画和本地存档规则；界面读取状态栏、刘海与底部手势区后，按实际安全区域自适应填满竖屏。
+- 功能区会随屏幕高度重新分布，图标、文字、宠物和像素设施保持原比例，不通过纵向拉伸凑满画面。
 - 顶部集中显示资源，五个主要入口固定在底部，农场和商店使用适合触控的大按钮。
 - 集市、宠物领养、设施和装饰使用分页陈列，避免在小屏幕堆叠。
 - 田园合成支持直接滑动，也保留四个方向按钮。
@@ -71,6 +73,7 @@ npm run test:e2e
 npm run test:mobile
 npm run build
 powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
+powershell -ExecutionPolicy Bypass -File scripts\verify-android-apk.ps1
 ```
 
-Windows 安装包输出到 `release/UU田园合集.exe`，Android 安装包输出到 `release/UU-Harvest-Mobile.apk`。
+Windows 安装包输出到 `release/UU田园合集.exe`，Android 安装包输出到 `release/UU-Harvest-Mobile.apk`。APK 验证脚本会根据设备安全区域定位导航，并执行全新安装、冷启动、主要页面切换、种植、重启存档和崩溃日志检查。

@@ -2,29 +2,42 @@ plugins {
     id "com.android.application"
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def hasReleaseKeystore = keystorePropertiesFile.exists()
+if (hasReleaseKeystore) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "com.uu.harvestcollection.mobile"
-    compileSdkVersion 36
-    buildToolsVersion "36.0.0"
+    compileSdkVersion 35
+    buildToolsVersion "35.0.0"
 
     defaultConfig {
         applicationId "com.uu.harvestcollection.mobile"
         minSdkVersion 24
-        targetSdkVersion 36
-        versionCode 250
-        versionName "2.5.0"
+        targetSdkVersion 35
+        versionCode 251
+        versionName "2.5.1"
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            release {
+                storeFile rootProject.file(keystoreProperties["storeFile"])
+                storePassword keystoreProperties["storePassword"]
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
         }
     }
 
-    sourceSets {
-        main {
-            assets.srcDirs = []
-        }
-    }
 }

@@ -14,6 +14,16 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.rgb(255, 248, 216));
         gameView = new GameView(this);
         setContentView(gameView);
+        gameView.setOnApplyWindowInsetsListener((view, insets) -> {
+            gameView.setSystemInsets(
+                insets.getSystemWindowInsetLeft(),
+                insets.getSystemWindowInsetTop(),
+                insets.getSystemWindowInsetRight(),
+                insets.getSystemWindowInsetBottom()
+            );
+            return insets;
+        });
+        gameView.requestApplyInsets();
     }
 
     @Override

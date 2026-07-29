@@ -7,3 +7,5 @@ android/.gradle/
 android/app/build/
 android/app/src/main/assets/www/
 android/local.properties
+android/keystore.properties
+release-signing/

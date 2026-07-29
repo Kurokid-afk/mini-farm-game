@@ -1,11 +1,13 @@
 package com.uu.harvestcollection.mobile;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Point;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.SystemClock;
 import android.view.MotionEvent;
@@ -92,12 +94,14 @@ final class GameView extends View {
     private static final int A_UNLOCK_PET = 46;
 
     private final Paint paint = new Paint();
+    private final Paint bitmapPaint = new Paint();
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Random random = new Random();
     private final List<Hit> hits = new ArrayList<>();
     private final List<Effect> effects = new ArrayList<>();
     private final Context appContext;
     private final GameState state;
+    private final PixelAssets assets;
 
     private int view = 0;
     private int marketTab = 0;
@@ -127,12 +131,21 @@ final class GameView extends View {
     private float scale = 1f;
     private float offsetX;
     private float offsetY;
+    private float viewportHeight = H;
+    private float layoutExtra;
+    private int insetLeft;
+    private int insetTop;
+    private int insetRight;
+    private int insetBottom;
 
     GameView(Context context) {
         super(context);
         appContext = context.getApplicationContext();
         state = GameState.load(appContext);
+        assets = new PixelAssets(getResources());
         paint.setAntiAlias(false);
+        bitmapPaint.setAntiAlias(false);
+        bitmapPaint.setFilterBitmap(false);
         textPaint.setTypeface(android.graphics.Typeface.create("sans", android.graphics.Typeface.NORMAL));
         setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         startLinkBoard();
@@ -145,6 +158,15 @@ final class GameView extends View {
     void saveNow() {
         state.save(appContext);
         lastSaveAt = SystemClock.uptimeMillis();
+    }
+
+    void setSystemInsets(int left, int top, int right, int bottom) {
+        if (insetLeft == left && insetTop == top && insetRight == right && insetBottom == bottom) return;
+        insetLeft = Math.max(0, left);
+        insetTop = Math.max(0, top);
+        insetRight = Math.max(0, right);
+        insetBottom = Math.max(0, bottom);
+        invalidate();
     }
 
     @Override
@@ -190,9 +212,15 @@ final class GameView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        scale = Math.min(getWidth() / W, getHeight() / H);
-        offsetX = (getWidth() - W * scale) / 2f;
-        offsetY = (getHeight() - H * scale) / 2f;
+        float availableWidth = Math.max(1f, getWidth() - insetLeft - insetRight);
+        float availableHeight = Math.max(1f, getHeight() - insetTop - insetBottom);
+        float widthScale = availableWidth / W;
+        float heightScale = availableHeight / H;
+        scale = widthScale * H <= availableHeight ? widthScale : heightScale;
+        viewportHeight = availableHeight / scale;
+        layoutExtra = Math.max(0f, viewportHeight - H);
+        offsetX = insetLeft + (availableWidth - W * scale) / 2f;
+        offsetY = insetTop;
         canvas.drawColor(MINT);
         canvas.save();
         canvas.translate(offsetX, offsetY);
@@ -212,8 +240,8 @@ final class GameView extends View {
     }
 
     private void drawBackground(Canvas canvas) {
-        fill(canvas, 0, 0, W, H, MINT);
-        for (int y = 0; y < H; y += 24) {
+        fill(canvas, 0, 0, W, viewportHeight, MINT);
+        for (int y = 0; y < viewportHeight; y += 24) {
             for (int x = (y / 24) % 2 == 0 ? 0 : 12; x < W; x += 24) {
                 fill(canvas, x, y, 2, 2, Color.argb(55, 255, 255, 255));
             }
@@ -243,19 +271,20 @@ final class GameView extends View {
     }
 
     private void drawNavigation(Canvas canvas) {
-        fill(canvas, 0, 888, W, 72, PAPER);
-        stroke(canvas, 0, 888, W, 72, INK, 2);
+        float y = layoutY(888);
+        fill(canvas, 0, y, W, 72, PAPER);
+        stroke(canvas, 0, y, W, 72, INK, 2);
         for (int i = 0; i < VIEW_NAMES.length; i++) {
             float x = 4 + i * 127;
             boolean active = view == i;
-            if (active) round(canvas, x + 4, 896, 119, 56, 6, CORAL, null, 0);
-            addHit(A_NAV, i, x, 892, 127, 64);
-            drawNavIcon(canvas, i, x + 63, 914, active ? Color.WHITE : INK);
+            if (active) round(canvas, x + 4, y + 8, 119, 56, 6, CORAL, null, 0);
+            addHit(A_NAV, i, x, y + 4, 127, 64);
+            drawNavIcon(canvas, i, x + 63, y + 26, active ? Color.WHITE : INK);
             String name = i == 4 && !state.petGardenUnlocked ? "宠物·锁" : VIEW_NAMES[i];
-            text(canvas, name, x + 63, 942, 10, active ? Color.WHITE : i == 4 && !state.petGardenUnlocked ? LOCK : INK, Paint.Align.CENTER, true);
+            text(canvas, name, x + 63, y + 54, 10, active ? Color.WHITE : i == 4 && !state.petGardenUnlocked ? LOCK : INK, Paint.Align.CENTER, true);
             if (i == 1 || i == 2) {
                 boolean done = i == 1 ? state.festivalLinkDone : state.festivalMatchDone;
-                circle(canvas, x + 112, 903, 5, done ? YELLOW : PAPER_2, INK, 1);
+                circle(canvas, x + 112, y + 15, 5, done ? YELLOW : PAPER_2, INK, 1);
             }
         }
     }
@@ -270,16 +299,17 @@ final class GameView extends View {
     }
 
     private void drawOrders(Canvas canvas) {
+        float y = layoutY(153);
         for (int i = 0; i < state.orders.size(); i++) {
             GameState.Order order = state.orders.get(i);
             GameData.Crop crop = GameData.crop(order.crop);
             float x = 18 + i * 207;
             boolean ready = state.produce[order.crop] >= order.amount;
-            card(canvas, x, 153, 197, 74, i % 2 == 0 ? PAPER : CREAM, 2);
-            drawCrop(canvas, order.crop, x + 25, 190, 0.58f);
-            text(canvas, crop.name + " ×" + order.amount, x + 48, 174, 10, INK, Paint.Align.LEFT, true);
-            text(canvas, "￥" + order.coins + " · 库" + state.produce[order.crop], x + 48, 197, 10, ready ? GREEN_DARK : CORAL_DARK, Paint.Align.LEFT, true);
-            button(canvas, ready ? "交付" : "备货", A_ORDER, i, x + 125, 201, 62, 20, ready ? GREEN_SOFT : PAPER_2, !ready);
+            card(canvas, x, y, 197, 74, i % 2 == 0 ? PAPER : CREAM, 2);
+            drawCrop(canvas, order.crop, x + 25, y + 37, 0.58f);
+            text(canvas, crop.name + " ×" + order.amount, x + 48, y + 21, 10, INK, Paint.Align.LEFT, true);
+            text(canvas, "￥" + order.coins + " · 库" + state.produce[order.crop], x + 48, y + 44, 10, ready ? GREEN_DARK : CORAL_DARK, Paint.Align.LEFT, true);
+            button(canvas, ready ? "交付" : "备货", A_ORDER, i, x + 125, y + 48, 62, 20, ready ? GREEN_SOFT : PAPER_2, !ready);
         }
     }
 
@@ -289,7 +319,7 @@ final class GameView extends View {
             int row = i / 3;
             int col = i % 3;
             float x = 18 + col * 207;
-            float y = 237 + row * 94;
+            float y = layoutY(237 + row * 94);
             boolean unlocked = i < state.unlockedPlots;
             int fill = unlocked ? SOIL : i == state.unlockedPlots ? GREEN_SOFT : Color.rgb(137, 167, 137);
             round(canvas, x, y, 197, 85, 5, fill, INK, 2);
@@ -323,43 +353,47 @@ final class GameView extends View {
     }
 
     private void drawFarmTools(Canvas canvas) {
+        float y = layoutY(619);
         for (int i = 0; i < TOOL_NAMES.length; i++) {
             float x = 18 + i * 121;
             boolean selected = state.selectedTool == i && automationAssign == 0;
-            button(canvas, TOOL_NAMES[i], A_TOOL, i, x, 619, 111, 42, selected ? YELLOW : CREAM, false);
+            button(canvas, TOOL_NAMES[i], A_TOOL, i, x, y, 111, 42, selected ? YELLOW : CREAM, false);
         }
     }
 
     private void drawSeedShelf(Canvas canvas) {
+        float shelfY = layoutY(670);
+        float actionY = layoutY(746);
         for (int i = 0; i < GameData.CROPS.length; i++) {
             GameData.Crop crop = GameData.crop(i);
             float x = 18 + i * 101;
             boolean locked = crop.level > state.level;
             boolean selected = state.selectedCrop == i;
-            round(canvas, x, 670, 93, 67, 5, selected ? YELLOW_SOFT : i % 2 == 0 ? PAPER : CREAM, INK, selected ? 3 : 1);
-            drawCrop(canvas, i, x + 24, 700, 0.54f);
-            text(canvas, crop.name, x + 48, 687, 9, locked ? LOCK : INK, Paint.Align.LEFT, true);
-            text(canvas, locked ? "Lv." + crop.level : "种 " + state.seeds[i], x + 48, 710, 9, locked ? LOCK : GREEN_DARK, Paint.Align.LEFT, true);
-            addHit(A_SEED, i, x, 670, 93, 67);
+            round(canvas, x, shelfY, 93, 67, 5, selected ? YELLOW_SOFT : i % 2 == 0 ? PAPER : CREAM, INK, selected ? 3 : 1);
+            drawCrop(canvas, i, x + 24, shelfY + 30, 0.54f);
+            text(canvas, crop.name, x + 48, shelfY + 17, 9, locked ? LOCK : INK, Paint.Align.LEFT, true);
+            text(canvas, locked ? "Lv." + crop.level : "种 " + state.seeds[i], x + 48, shelfY + 40, 9, locked ? LOCK : GREEN_DARK, Paint.Align.LEFT, true);
+            addHit(A_SEED, i, x, shelfY, 93, 67);
         }
         GameData.Crop selected = GameData.crop(state.selectedCrop);
-        button(canvas, "补种 " + selected.name + " ×3 · ￥" + selected.seedPrice * 3, A_BUY_SEED, state.selectedCrop, 18, 746, 230, 42, YELLOW_SOFT, selected.level > state.level);
-        button(canvas, "洒水 " + (state.sprinklerEnabled ? "开" : "关"), A_AUTO_TOGGLE, 0, 258, 746, 171, 42, state.sprinklerEnabled ? GREEN_SOFT : PAPER_2, false);
-        button(canvas, "收菜 " + (state.harvesterEnabled ? "开" : "关"), A_AUTO_TOGGLE, 1, 439, 746, 183, 42, state.harvesterEnabled ? GREEN_SOFT : PAPER_2, false);
+        button(canvas, "补种 " + selected.name + " ×3 · ￥" + selected.seedPrice * 3, A_BUY_SEED, state.selectedCrop, 18, actionY, 230, 42, YELLOW_SOFT, selected.level > state.level);
+        button(canvas, "洒水 " + (state.sprinklerEnabled ? "开" : "关"), A_AUTO_TOGGLE, 0, 258, actionY, 171, 42, state.sprinklerEnabled ? GREEN_SOFT : PAPER_2, false);
+        button(canvas, "收菜 " + (state.harvesterEnabled ? "开" : "关"), A_AUTO_TOGGLE, 1, 439, actionY, 183, 42, state.harvesterEnabled ? GREEN_SOFT : PAPER_2, false);
     }
 
     private void drawFarmFooter(Canvas canvas) {
         int count = produceCount();
         int value = produceValue();
-        card(canvas, 18, 797, 294, 80, PAPER, 2);
-        text(canvas, "仓库 " + count + " 份 · 约￥" + value, 32, 819, 11, INK, Paint.Align.LEFT, true);
-        button(canvas, "全部出售", A_SELL, 0, 174, 832, 124, 34, count > 0 ? GREEN_SOFT : PAPER_2, count == 0);
-        card(canvas, 322, 797, 300, 80, CREAM, 2);
-        text(canvas, "丰收庆典 · 第 " + (state.festivalRound + 1) + " 轮", 338, 817, 11, INK, Paint.Align.LEFT, true);
+        float y = layoutY(797);
+        card(canvas, 18, y, 294, 80, PAPER, 2);
+        text(canvas, "仓库 " + count + " 份 · 约￥" + value, 32, y + 22, 11, INK, Paint.Align.LEFT, true);
+        button(canvas, "全部出售", A_SELL, 0, 174, y + 35, 124, 34, count > 0 ? GREEN_SOFT : PAPER_2, count == 0);
+        card(canvas, 322, y, 300, 80, CREAM, 2);
+        text(canvas, "丰收庆典 · 第 " + (state.festivalRound + 1) + " 轮", 338, y + 20, 11, INK, Paint.Align.LEFT, true);
         String link = state.festivalLinkDone ? "完成" : state.festivalLink + "/" + state.linkGoal();
         String match = state.festivalMatchDone ? "完成" : state.festivalMatch + "/" + state.matchGoal();
-        text(canvas, "连连看 " + link + "   益智 " + match, 338, 842, 9, GREEN_DARK, Paint.Align.LEFT, true);
-        text(canvas, "游园礼袋 " + state.miniGiftProgress + "/3", 338, 864, 9, CORAL_DARK, Paint.Align.LEFT, true);
+        text(canvas, "连连看 " + link + "   益智 " + match, 338, y + 45, 9, GREEN_DARK, Paint.Align.LEFT, true);
+        text(canvas, "游园礼袋 " + state.miniGiftProgress + "/3", 338, y + 67, 9, CORAL_DARK, Paint.Align.LEFT, true);
     }
 
     private void drawMarket(Canvas canvas) {
@@ -380,25 +414,26 @@ final class GameView extends View {
         int[] max = {4, 3, 5, 5};
         int[] base = {140, 240, 300, 260};
         for (int i = 0; i < names.length; i++) {
-            float y = 211 + i * 105;
+            float y = layoutY(211 + i * 105);
             int cost = levels[i] >= max[i] ? 0 : Math.round(base[i] * (float) Math.pow(1.8, levels[i]));
             marketRow(canvas, names[i], desc[i], "Lv." + levels[i] + "/" + max[i], cost == 0 ? "满级" : "￥" + cost, A_UPGRADE, i, y, cost == 0);
         }
-        marketRow(canvas, "种子券兑换", "随机获得当前等级种子 ×3", "持有 " + state.seedTickets, "兑换", A_EXCHANGE, 0, 641, state.seedTickets < 1);
+        marketRow(canvas, "种子券兑换", "随机获得当前等级种子 ×3", "持有 " + state.seedTickets, "兑换", A_EXCHANGE, 0, layoutY(641), state.seedTickets < 1);
         int landCost = state.unlockedPlots >= 12 ? 0 : GameData.LAND_COSTS[state.unlockedPlots - 6];
-        marketRow(canvas, "扩建土地", "增加一块可种植土地", state.unlockedPlots + "/12", landCost == 0 ? "完成" : "￥" + landCost, A_UNLOCK_LAND, 0, 746, landCost == 0);
+        marketRow(canvas, "扩建土地", "增加一块可种植土地", state.unlockedPlots + "/12", landCost == 0 ? "完成" : "￥" + landCost, A_UNLOCK_LAND, 0, layoutY(746), landCost == 0);
     }
 
     private void drawAutomationMarket(Canvas canvas) {
         int sprinklerCost = state.sprinklerBought >= 12 ? 0 : GameData.SPRINKLER_COSTS[state.sprinklerBought];
         int harvesterCost = state.harvesterBought >= 12 ? 0 : GameData.HARVESTER_COSTS[state.harvesterBought];
-        automationCard(canvas, false, "自动洒水器", "自动浇水，每台照顾一块土地", state.sprinklerBought, sprinklerCost, 216);
-        automationCard(canvas, true, "收菜机器人", "成熟后自动收获，每台照顾一块土地", state.harvesterBought, harvesterCost, 412);
-        card(canvas, 18, 620, 604, 164, PAPER, 2);
-        text(canvas, "布置规则", 34, 648, 14, INK, Paint.Align.LEFT, true);
-        text(canvas, "购买后点“布置”，再点农田中的目标格。", 34, 681, 11, INK_SOFT, Paint.Align.LEFT, false);
-        text(canvas, "再次点击已布置的格子会收回设备。", 34, 711, 11, INK_SOFT, Paint.Align.LEFT, false);
-        text(canvas, "设备开关关闭后保留格子，随时可手动操作。", 34, 741, 11, GREEN_DARK, Paint.Align.LEFT, true);
+        automationCard(canvas, false, "自动洒水器", "自动浇水，每台照顾一块土地", state.sprinklerBought, sprinklerCost, layoutY(216));
+        automationCard(canvas, true, "收菜机器人", "成熟后自动收获，每台照顾一块土地", state.harvesterBought, harvesterCost, layoutY(412));
+        float rulesY = layoutY(620);
+        card(canvas, 18, rulesY, 604, 164, PAPER, 2);
+        text(canvas, "布置规则", 34, rulesY + 28, 14, INK, Paint.Align.LEFT, true);
+        text(canvas, "购买后点“布置”，再点农田中的目标格。", 34, rulesY + 61, 11, INK_SOFT, Paint.Align.LEFT, false);
+        text(canvas, "再次点击已布置的格子会收回设备。", 34, rulesY + 91, 11, INK_SOFT, Paint.Align.LEFT, false);
+        text(canvas, "设备开关关闭后保留格子，随时可手动操作。", 34, rulesY + 121, 11, GREEN_DARK, Paint.Align.LEFT, true);
     }
 
     private void automationCard(Canvas canvas, boolean harvester, String name, String desc, int count, int cost, float y) {
@@ -419,12 +454,13 @@ final class GameView extends View {
         int[] levels = {state.growthResearch, state.miniResearch, state.orderResearch};
         for (int i = 0; i < names.length; i++) {
             int cost = levels[i] + 1;
-            marketRow(canvas, names[i], descriptions[i], "Lv." + levels[i] + "/5", levels[i] >= 5 ? "满级" : "★" + cost, A_RESEARCH, i, 222 + i * 132, levels[i] >= 5);
+            marketRow(canvas, names[i], descriptions[i], "Lv." + levels[i] + "/5", levels[i] >= 5 ? "满级" : "★" + cost, A_RESEARCH, i, layoutY(222 + i * 132), levels[i] >= 5);
         }
-        card(canvas, 18, 638, 604, 126, CREAM, 2);
-        text(canvas, "丰收星来自反复完成庆典", 34, 669, 13, INK, Paint.Align.LEFT, true);
-        text(canvas, "连连看和益智屋均达到本轮目标后，自动开启下一轮。", 34, 703, 10, GREEN_DARK, Paint.Align.LEFT, false);
-        text(canvas, "当前丰收星 " + state.stars, 34, 735, 11, CORAL_DARK, Paint.Align.LEFT, true);
+        float infoY = layoutY(638);
+        card(canvas, 18, infoY, 604, 126, CREAM, 2);
+        text(canvas, "丰收星来自反复完成庆典", 34, infoY + 31, 13, INK, Paint.Align.LEFT, true);
+        text(canvas, "连连看和益智屋均达到本轮目标后，自动开启下一轮。", 34, infoY + 65, 10, GREEN_DARK, Paint.Align.LEFT, false);
+        text(canvas, "当前丰收星 " + state.stars, 34, infoY + 97, 11, CORAL_DARK, Paint.Align.LEFT, true);
     }
 
     private void marketRow(Canvas canvas, String name, String description, String status, String price, int action, int index, float y, boolean disabled) {
@@ -449,7 +485,7 @@ final class GameView extends View {
                 int value = linkBoard[r][c];
                 if (value < 0) continue;
                 float x = 43 + c * 93;
-                float y = 211 + r * 78;
+                float y = layoutY(211 + r * 78);
                 boolean selected = linkSelected != null && linkSelected.x == c && linkSelected.y == r;
                 float pulse = selected ? 2f + (float) Math.sin(System.currentTimeMillis() / 100d) * 1.5f : 0f;
                 round(canvas, x - pulse, y - pulse, 82 + pulse * 2, 66 + pulse * 2, 5, Color.WHITE, selected ? YELLOW : INK, selected ? 4 : 2);
@@ -459,9 +495,10 @@ final class GameView extends View {
             }
         }
         if (linkPath != null && System.currentTimeMillis() < linkPathUntil) drawLinkPath(canvas);
-        card(canvas, 18, 842, 604, 34, CREAM, 1);
+        float footerY = layoutY(842);
+        card(canvas, 18, footerY, 604, 34, CREAM, 1);
         String festival = state.festivalLinkDone ? "本轮完成" : state.festivalLink + "/" + state.linkGoal() + " 对";
-        text(canvas, "庆典 " + festival + " · 已清盘 " + linkBoards + " · 不限时间", 320, 859, 9, GREEN_DARK, Paint.Align.CENTER, true);
+        text(canvas, "庆典 " + festival + " · 已清盘 " + linkBoards + " · 不限时间", 320, footerY + 17, 9, GREEN_DARK, Paint.Align.CENTER, true);
     }
 
     private void drawPuzzle(Canvas canvas) {
@@ -473,15 +510,16 @@ final class GameView extends View {
     }
 
     private void drawMatch(Canvas canvas) {
-        card(canvas, 18, 206, 604, 52, PAPER, 2);
-        text(canvas, "得分 " + matchScore, 34, 232, 11, INK, Paint.Align.LEFT, true);
-        text(canvas, "印章进度 " + state.matchRewardPieces + "/" + state.matchTarget, 236, 232, 11, CORAL_DARK, Paint.Align.CENTER, true);
+        float statusY = layoutY(206);
+        card(canvas, 18, statusY, 604, 52, PAPER, 2);
+        text(canvas, "得分 " + matchScore, 34, statusY + 26, 11, INK, Paint.Align.LEFT, true);
+        text(canvas, "印章进度 " + state.matchRewardPieces + "/" + state.matchTarget, 236, statusY + 26, 11, CORAL_DARK, Paint.Align.CENTER, true);
         String festival = state.festivalMatchDone ? "完成" : state.festivalMatch + "/" + state.matchGoal();
-        text(canvas, "庆典 " + festival, 592, 232, 10, GREEN_DARK, Paint.Align.RIGHT, true);
+        text(canvas, "庆典 " + festival, 592, statusY + 26, 10, GREEN_DARK, Paint.Align.RIGHT, true);
         for (int r = 0; r < 7; r++) {
             for (int c = 0; c < 7; c++) {
                 float x = 45 + c * 79;
-                float y = 278 + r * 77;
+                float y = layoutY(278 + r * 77);
                 int value = matchBoard[r][c];
                 boolean selected = matchSelected != null && matchSelected.x == c && matchSelected.y == r;
                 round(canvas, x, y, 70, 68, 5, selected ? YELLOW_SOFT : CREAM, selected ? YELLOW : INK, selected ? 4 : 1);
@@ -490,19 +528,21 @@ final class GameView extends View {
                 addHit(A_MATCH_CELL, r * 7 + c, x, y, 70, 68);
             }
         }
-        card(canvas, 18, 828, 604, 48, CREAM, 2);
-        text(canvas, "点击相邻棋子交换，也可以直接滑动；没有步数和局数限制", 320, 852, 9, INK_SOFT, Paint.Align.CENTER, false);
+        float footerY = layoutY(828);
+        card(canvas, 18, footerY, 604, 48, CREAM, 2);
+        text(canvas, "点击相邻棋子交换，也可以直接滑动；没有步数和局数限制", 320, footerY + 24, 9, INK_SOFT, Paint.Align.CENTER, false);
     }
 
     private void drawMerge(Canvas canvas) {
-        card(canvas, 18, 206, 604, 52, PAPER, 2);
-        text(canvas, "得分 " + mergeScore, 34, 232, 11, INK, Paint.Align.LEFT, true);
-        text(canvas, "每次合成都会推进印章与庆典", 592, 232, 10, GREEN_DARK, Paint.Align.RIGHT, true);
+        float statusY = layoutY(206);
+        card(canvas, 18, statusY, 604, 52, PAPER, 2);
+        text(canvas, "得分 " + mergeScore, 34, statusY + 26, 11, INK, Paint.Align.LEFT, true);
+        text(canvas, "每次合成都会推进印章与庆典", 592, statusY + 26, 10, GREEN_DARK, Paint.Align.RIGHT, true);
         float size = 124;
         for (int r = 0; r < 4; r++) {
             for (int c = 0; c < 4; c++) {
                 float x = 63 + c * 130;
-                float y = 284 + r * 130;
+                float y = layoutY(284 + r * 130);
                 int value = mergeBoard[r][c];
                 int color = value == 0 ? PAPER_2 : MATCH_COLORS[(value - 1) % MATCH_COLORS.length];
                 round(canvas, x, y, size, size, 6, color, INK, 2);
@@ -513,28 +553,31 @@ final class GameView extends View {
             }
         }
         String[] arrows = {"↑", "↓", "←", "→"};
-        for (int i = 0; i < 4; i++) button(canvas, arrows[i], A_MERGE_MOVE, i, 74 + i * 126, 814, 112, 54, CREAM, false);
+        for (int i = 0; i < 4; i++) button(canvas, arrows[i], A_MERGE_MOVE, i, 74 + i * 126, layoutY(814), 112, 54, CREAM, false);
     }
 
     private void drawPets(Canvas canvas) {
         title(canvas, "暖阳宠物园", "农场供给蔬菜 · 宠物回流金币和堆肥");
         if (!state.petGardenUnlocked) {
-            card(canvas, 72, 260, 496, 330, PAPER, 3);
-            drawPet(canvas, 0, 320, 370, 1f, false);
-            text(canvas, "修建一座安静的像素宠物园", 320, 456, 17, INK, Paint.Align.CENTER, true);
-            text(canvas, "开放后可领养、修设施并积累访客收益", 320, 500, 11, INK_SOFT, Paint.Align.CENTER, false);
-            button(canvas, "修建宠物园 · ￥520", A_UNLOCK_PET, 0, 170, 532, 300, 52, YELLOW_SOFT, state.coins < 520);
+            float top = layoutY(260);
+            card(canvas, 72, top, 496, layoutY(590) - top, PAPER, 3);
+            drawPet(canvas, 0, 320, layoutY(370), 1f, false);
+            text(canvas, "修建一座安静的像素宠物园", 320, layoutY(456), 17, INK, Paint.Align.CENTER, true);
+            text(canvas, "开放后可领养、修设施并积累访客收益", 320, layoutY(500), 11, INK_SOFT, Paint.Align.CENTER, false);
+            button(canvas, "修建宠物园 · ￥520", A_UNLOCK_PET, 0, 170, layoutY(532), 300, 52, YELLOW_SOFT, state.coins < 520);
             return;
         }
+        float petCardY = layoutY(153);
         for (int i = 0; i < 4; i++) {
             float x = 18 + i * 152;
             boolean owned = state.petOwned[i];
             boolean selected = state.selectedPet == i;
-            round(canvas, x, 153, 142, 66, 5, selected ? YELLOW_SOFT : CREAM, selected ? CORAL : INK, selected ? 3 : 1);
-            drawPet(canvas, i, x + 31, 184, 0.42f, false);
-            text(canvas, GameData.PET_NAMES[i], x + 58, 174, 9, owned ? INK : LOCK, Paint.Align.LEFT, true);
-            text(canvas, owned ? "已领养" : "￥" + GameData.PET_COSTS[i], x + 58, 199, 8, owned ? GREEN_DARK : CORAL_DARK, Paint.Align.LEFT, true);
-            addHit(A_PET_SELECT, i, x, 153, 142, 66);
+            round(canvas, x, petCardY, 142, 66, 5, selected ? YELLOW_SOFT : CREAM, selected ? CORAL : INK, selected ? 3 : 1);
+            drawPet(canvas, i, x + 31, petCardY + 31, 0.42f, false);
+            text(canvas, GameData.PET_NAMES[i], x + 58, petCardY + 21, 9, owned ? INK : LOCK, Paint.Align.LEFT, true);
+            if (owned) drawPetCardStatus(canvas, i, x + 58, petCardY + 42);
+            else text(canvas, "￥" + GameData.PET_COSTS[i], x + 58, petCardY + 46, 8, CORAL_DARK, Paint.Align.LEFT, true);
+            addHit(A_PET_SELECT, i, x, petCardY, 142, 66);
         }
         drawPetGarden(canvas);
         drawPetControls(canvas);
@@ -542,68 +585,79 @@ final class GameView extends View {
     }
 
     private void drawPetGarden(Canvas canvas) {
-        round(canvas, 18, 230, 604, 340, 6, Color.rgb(174, 218, 145), INK, 2);
-        for (int y = 246; y < 560; y += 24) {
-            for (int x = 34 + (y % 48); x < 610; x += 54) fill(canvas, x, y, 5, 5, Color.rgb(116, 183, 102));
+        float gardenTop = layoutY(230);
+        float gardenBottom = layoutY(570);
+        RectF gardenBounds = new RectF(18, gardenTop, 622, gardenBottom);
+        if (assets.petGarden != null) {
+            canvas.save();
+            Path gardenClip = new Path();
+            gardenClip.addRoundRect(gardenBounds, 6, 6, Path.Direction.CW);
+            canvas.clipPath(gardenClip);
+            drawBitmapCenterCrop(canvas, assets.petGarden, gardenBounds);
+            canvas.restore();
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(2);
+            paint.setColor(INK);
+            canvas.drawRoundRect(gardenBounds, 6, 6, paint);
+            paint.setStyle(Paint.Style.FILL);
+        } else {
+            round(canvas, 18, gardenTop, 604, gardenBottom - gardenTop, 6, Color.rgb(174, 218, 145), INK, 2);
+            for (float y = gardenTop + 16; y < gardenBottom - 10; y += 24) {
+                for (int x = 34 + (((int) y) % 48); x < 610; x += 54) fill(canvas, x, y, 5, 5, Color.rgb(116, 183, 102));
+            }
         }
-        if (state.facilities[0] > 0) drawKennel(canvas, 54, 394);
-        if (state.facilities[1] > 0) drawPond(canvas, 486, 419);
-        if (state.facilities[2] > 0) drawFeeder(canvas, 520, 282);
-        if (state.facilities[3] > 0) drawToyBox(canvas, 90, 506);
-        if (state.facilities[4] > 0) drawGrooming(canvas, 410, 505);
-        if (state.facilities[5] > 0) drawFlowerArch(canvas, 275, 268);
-        if (state.facilities[6] > 0) drawLamp(canvas, 590, 500);
-        if (state.facilities[7] > 0) drawPicnic(canvas, 230, 488);
+        drawFacilitySprite(canvas, 0, 0, 320, layoutY(520), 58);
+        if (state.facilities[0] > 0) drawFacilitySprite(canvas, 1, 0, 84, layoutY(450), 112);
+        if (state.facilities[1] > 0) drawFacilitySprite(canvas, 2, 0, 512, layoutY(460), 118);
+        if (state.facilities[2] > 0) drawFacilitySprite(canvas, 3, 0, 535, layoutY(315), 88);
+        if (state.facilities[3] > 0) drawFacilitySprite(canvas, 0, 1, 125, layoutY(515), 80);
+        if (state.facilities[4] > 0) drawFacilitySprite(canvas, 1, 1, 405, layoutY(507), 92);
+        if (state.facilities[5] > 0) drawFacilitySprite(canvas, 2, 1, 315, layoutY(300), 102);
+        if (state.facilities[6] > 0) drawFacilitySprite(canvas, 3, 1, 580, layoutY(500), 76);
+        if (state.facilities[7] > 0) drawFacilitySprite(canvas, 0, 2, 215, layoutY(490), 100);
         long now = System.currentTimeMillis();
         for (int i = 0; i < 4; i++) {
             if (!state.petOwned[i]) continue;
             float phase = now / (1150f + i * 170f) + i * 2.1f;
             float x = 170 + i * 94 + (float) Math.sin(phase) * (34 + i * 4);
-            float y = 338 + (i % 2) * 88 + (float) Math.cos(phase * 0.72f) * 26;
+            float y = layoutY(338 + (i % 2) * 88) + (float) Math.cos(phase * 0.72f) * 26;
             boolean acting = i == state.selectedPet && now < petActionUntil;
             if (acting) {
-                if (petAction == 0) { x = 514; y = 326; }
-                else if (petAction == 2) { x = 116; y = 482; }
-                else if (petAction == 3) { x = 487; y = 430; }
-                else if (petAction == 4) { x = 408; y = 478; }
+                if (petAction == 0) { x = 514; y = layoutY(326); }
+                else if (petAction == 2) { x = 116; y = layoutY(482); }
+                else if (petAction == 3) { x = 487; y = layoutY(430); }
+                else if (petAction == 4) { x = 408; y = layoutY(478); }
             }
             drawPet(canvas, i, x, y + (float) Math.sin(now / 120d + i) * (acting ? 4 : 2), 0.62f, acting);
-        }
-        if (state.petOwned[state.selectedPet]) {
-            float hunger = state.petHunger[state.selectedPet];
-            float happy = state.petHappy[state.selectedPet];
-            float clean = state.petClean[state.selectedPet];
-            card(canvas, 30, 242, 212, 58, PAPER, 1);
-            text(canvas, GameData.PET_NAMES[state.selectedPet], 43, 257, 10, INK, Paint.Align.LEFT, true);
-            drawStatusBar(canvas, "饱", hunger, 43, 277, CORAL);
-            drawStatusBar(canvas, "乐", happy, 110, 277, YELLOW);
-            drawStatusBar(canvas, "净", clean, 177, 277, SKY);
         }
     }
 
     private void drawPetControls(Canvas canvas) {
         String[] actions = {"喂食", "抚摸", "玩耍", "洗澡", "梳毛"};
+        float actionsY = layoutY(580);
+        float foodY = layoutY(632);
         for (int i = 0; i < actions.length; i++) {
             boolean unavailable = !state.petOwned[state.selectedPet]
                 || (i == 3 && state.facilities[1] < 1)
                 || (i == 4 && state.facilities[4] < 1);
-            button(canvas, actions[i], A_PET_ACTION, i, 18 + i * 121, 580, 111, 43, i == 0 ? YELLOW_SOFT : CREAM, unavailable);
+            button(canvas, actions[i], A_PET_ACTION, i, 18 + i * 121, actionsY, 111, 43, i == 0 ? YELLOW_SOFT : CREAM, unavailable);
         }
-        button(canvas, "加工口粮 ×5", A_PET_FOOD, 0, 18, 632, 190, 42, GREEN_SOFT, produceCount() < 2 || state.coins < 15);
-        text(canvas, "口粮 " + state.petFood + " · 需蔬菜2份+￥15", 224, 653, 9, INK, Paint.Align.LEFT, true);
-        button(canvas, "领取 ￥" + (int) state.visitorCoins, A_PET_CLAIM, 0, 462, 632, 160, 42, YELLOW_SOFT, state.visitorCoins < 1f);
+        button(canvas, "加工口粮 ×5", A_PET_FOOD, 0, 18, foodY, 190, 42, GREEN_SOFT, produceCount() < 2 || state.coins < 15);
+        text(canvas, "口粮 " + state.petFood + " · 需蔬菜2份+￥15", 224, foodY + 21, 9, INK, Paint.Align.LEFT, true);
+        button(canvas, "领取 ￥" + (int) state.visitorCoins, A_PET_CLAIM, 0, 462, foodY, 160, 42, YELLOW_SOFT, state.visitorCoins < 1f);
     }
 
     private void drawPetShop(Canvas canvas) {
-        card(canvas, 18, 686, 604, 190, PAPER, 2);
-        text(canvas, "宠物园设施", 34, 710, 12, INK, Paint.Align.LEFT, true);
-        text(canvas, "第 " + (petPage + 1) + "/3 页", 520, 710, 9, GREEN_DARK, Paint.Align.RIGHT, true);
-        button(canvas, petPage == 0 ? "·" : "‹", A_PET_PAGE, -1, 532, 695, 34, 28, CREAM, petPage == 0);
-        button(canvas, petPage == 2 ? "·" : "›", A_PET_PAGE, 1, 576, 695, 34, 28, CREAM, petPage == 2);
+        float shopY = layoutY(686);
+        card(canvas, 18, shopY, 604, layoutY(876) - shopY, PAPER, 2);
+        text(canvas, "宠物园设施", 34, layoutY(710), 12, INK, Paint.Align.LEFT, true);
+        text(canvas, "第 " + (petPage + 1) + "/3 页", 520, layoutY(710), 9, GREEN_DARK, Paint.Align.RIGHT, true);
+        button(canvas, petPage == 0 ? "·" : "‹", A_PET_PAGE, -1, 532, layoutY(695), 34, 28, CREAM, petPage == 0);
+        button(canvas, petPage == 2 ? "·" : "›", A_PET_PAGE, 1, 576, layoutY(695), 34, 28, CREAM, petPage == 2);
         for (int slot = 0; slot < 3; slot++) {
             int index = petPage * 3 + slot;
             if (index >= GameData.FACILITY_NAMES.length) continue;
-            float y = 729 + slot * 48;
+            float y = layoutY(729 + slot * 48);
             int level = state.facilities[index];
             int[] costs = GameData.FACILITY_COSTS[index];
             boolean max = level >= costs.length;
@@ -639,6 +693,7 @@ final class GameView extends View {
             }
             return true;
         }
+        performClick();
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit hit = hits.get(i);
             if (!hit.disabled && hit.bounds.contains(x, y)) {
@@ -646,6 +701,12 @@ final class GameView extends View {
                 return true;
             }
         }
+        return true;
+    }
+
+    @Override
+    public boolean performClick() {
+        super.performClick();
         return true;
     }
 
@@ -660,21 +721,21 @@ final class GameView extends View {
             }
             automationAssign = 0;
         } else if (hit.action == A_ORDER) {
-            result(state.deliverOrder(hit.index), 320, 183);
+            result(state.deliverOrder(hit.index), 320, layoutY(183));
         } else if (hit.action == A_PLOT) {
             if (automationAssign > 0) {
-                result(state.assignAutomation(automationAssign == 1, hit.index), 320, 500);
+                result(state.assignAutomation(automationAssign == 1, hit.index), 320, layoutY(500));
             } else if (state.selectedTool == 0) {
-                result(state.plant(hit.index, now), 320, 500);
+                result(state.plant(hit.index, now), 320, layoutY(500));
                 addEffect("sprout", plotCenterX(hit.index), plotCenterY(hit.index), GREEN, "播种");
             } else if (state.selectedTool == 1) {
-                result(state.water(hit.index, now), 320, 500);
+                result(state.water(hit.index, now), 320, layoutY(500));
                 addEffect("water", plotCenterX(hit.index), plotCenterY(hit.index), SKY, "浇水");
             } else if (state.selectedTool == 2) {
-                result(state.fertilize(hit.index, now), 320, 500);
+                result(state.fertilize(hit.index, now), 320, layoutY(500));
                 addEffect("spark", plotCenterX(hit.index), plotCenterY(hit.index), YELLOW, "施肥");
             } else if (state.selectedTool == 3) {
-                result(state.harvest(hit.index, now, false), 320, 500);
+                result(state.harvest(hit.index, now, false), 320, layoutY(500));
                 addEffect("harvest", plotCenterX(hit.index), plotCenterY(hit.index), GREEN_SOFT, "收获");
             } else {
                 toast("请在集市的自动化页面选择设备并点“布置”", false);
@@ -689,9 +750,9 @@ final class GameView extends View {
                 automationAssign = 0;
             } else toast("农场等级还不够", false);
         } else if (hit.action == A_BUY_SEED) {
-            result(state.buySeeds(hit.index), 200, 746);
+            result(state.buySeeds(hit.index), 200, layoutY(746));
         } else if (hit.action == A_SELL) {
-            result(state.sellAll(), 210, 820);
+            result(state.sellAll(), 210, layoutY(820));
         } else if (hit.action == A_AUTO_TOGGLE) {
             if (hit.index == 0) state.sprinklerEnabled = !state.sprinklerEnabled;
             else state.harvesterEnabled = !state.harvesterEnabled;
@@ -699,20 +760,20 @@ final class GameView extends View {
         } else if (hit.action == A_MARKET_TAB) {
             marketTab = hit.index;
         } else if (hit.action == A_UPGRADE) {
-            result(state.buyUpgrade(hit.index), 500, 400);
+            result(state.buyUpgrade(hit.index), 500, layoutY(400));
         } else if (hit.action == A_BUY_AUTO) {
-            result(state.buyAutomation(hit.index == 0), 320, 420);
+            result(state.buyAutomation(hit.index == 0), 320, layoutY(420));
         } else if (hit.action == A_PLACE_AUTO) {
             automationAssign = hit.index == 0 ? 1 : 2;
             view = 0;
             state.selectedTool = 4;
             toast("请选择要布置的农田格子", true);
         } else if (hit.action == A_UNLOCK_LAND) {
-            result(state.unlockLand(), 500, 760);
+            result(state.unlockLand(), 500, layoutY(760));
         } else if (hit.action == A_EXCHANGE) {
-            result(state.exchangeTicket(), 500, 660);
+            result(state.exchangeTicket(), 500, layoutY(660));
         } else if (hit.action == A_RESEARCH) {
-            result(state.buyResearch(hit.index), 500, 400);
+            result(state.buyResearch(hit.index), 500, layoutY(400));
         } else if (hit.action == A_LINK_CELL) {
             clickLink(hit.index / 6, hit.index % 6);
         } else if (hit.action == A_LINK_HINT) {
@@ -733,25 +794,25 @@ final class GameView extends View {
         } else if (hit.action == A_MERGE_MOVE) {
             moveMerge(hit.index);
         } else if (hit.action == A_PET_SELECT) {
-            result(state.adoptPet(hit.index), 320, 180);
+            result(state.adoptPet(hit.index), 320, layoutY(180));
         } else if (hit.action == A_PET_ACTION) {
             GameState.Result action = state.interactPet(hit.index);
             if (action.ok) {
                 petAction = hit.index;
                 petActionUntil = now + 1500L;
-                addEffect("heart", 320, 420, CORAL, action.message);
+                addEffect("heart", 320, layoutY(420), CORAL, action.message);
             }
-            result(action, 320, 590);
+            result(action, 320, layoutY(590));
         } else if (hit.action == A_PET_FOOD) {
-            result(state.makePetFood(), 130, 640);
+            result(state.makePetFood(), 130, layoutY(640));
         } else if (hit.action == A_PET_CLAIM) {
-            result(state.claimVisitorCoins(), 540, 640);
+            result(state.claimVisitorCoins(), 540, layoutY(640));
         } else if (hit.action == A_PET_FACILITY) {
-            result(state.buyFacility(hit.index), 520, 780);
+            result(state.buyFacility(hit.index), 520, layoutY(780));
         } else if (hit.action == A_PET_PAGE) {
             petPage = Math.max(0, Math.min(2, petPage + hit.index));
         } else if (hit.action == A_UNLOCK_PET) {
-            result(state.unlockPetGarden(), 320, 520);
+            result(state.unlockPetGarden(), 320, layoutY(520));
         }
         saveNow();
         invalidate();
@@ -784,14 +845,14 @@ final class GameView extends View {
         int second = linkBoard[row][col];
         if (first != second) {
             toast("图案不同，请看文字和轮廓", false);
-            addEffect("shake", 320, 500, CORAL, "不同");
+            addEffect("shake", 320, layoutY(500), CORAL, "不同");
             linkSelected = new Point(col, row);
             return;
         }
         List<Point> path = findLinkPath(linkSelected.y, linkSelected.x, row, col);
         if (path == null) {
             toast("这两个图案暂时连不到", false);
-            addEffect("shake", 320, 500, CORAL, "挡住了");
+            addEffect("shake", 320, layoutY(500), CORAL, "挡住了");
             linkSelected = new Point(col, row);
             return;
         }
@@ -804,7 +865,7 @@ final class GameView extends View {
         linkSelected = null;
         linkScore += 120;
         state.awardLinkPair();
-        addEffect("pop", 43 + col * 93 + 41, 211 + row * 78 + 33, LINK_COLORS[first], "+120");
+        addEffect("pop", 43 + col * 93 + 41, layoutY(211 + row * 78) + 33, LINK_COLORS[first], "+120");
         collapseLink();
         if (remainingLinkTiles() == 0) {
             linkBoards++;
@@ -995,7 +1056,8 @@ final class GameView extends View {
         if (matches.isEmpty()) {
             swap(matchBoard, a.y, a.x, b.y, b.x);
             toast("没有形成三连，棋子已回弹", false);
-            addEffect("shake", (45 + a.x * 79 + 35 + 45 + b.x * 79 + 35) / 2f, (278 + a.y * 77 + 34 + 278 + b.y * 77 + 34) / 2f, CORAL, "未消除");
+            addEffect("shake", (45 + a.x * 79 + 35 + 45 + b.x * 79 + 35) / 2f,
+                (layoutY(278 + a.y * 77) + 34 + layoutY(278 + b.y * 77) + 34) / 2f, CORAL, "未消除");
             return;
         }
         resolveMatches(matches);
@@ -1030,7 +1092,7 @@ final class GameView extends View {
                 int r = cell / 7;
                 int c = cell % 7;
                 if (matchBoard[r][c] >= 0) {
-                    addEffect("pop", 45 + c * 79 + 35, 278 + r * 77 + 34, MATCH_COLORS[matchBoard[r][c]], "+" + (40 + cascades * 10));
+                    addEffect("pop", 45 + c * 79 + 35, layoutY(278 + r * 77) + 34, MATCH_COLORS[matchBoard[r][c]], "+" + (40 + cascades * 10));
                     matchBoard[r][c] = -1;
                     removed++;
                 }
@@ -1086,7 +1148,7 @@ final class GameView extends View {
         mergeScore += gained;
         if (merges > 0) {
             state.awardMatchPieces(merges * 3);
-            addEffect("pop", 320, 500, YELLOW, "合成 +" + gained);
+            addEffect("pop", 320, layoutY(500), YELLOW, "合成 +" + gained);
         }
         addMergeTile();
         if (!mergeHasMove()) {
@@ -1164,8 +1226,9 @@ final class GameView extends View {
         float alpha = Math.min(1f, (toastUntil - now) / 240f);
         int color = toastGood ? GREEN_SOFT : Color.rgb(245, 183, 174);
         int width = Math.min(590, Math.max(260, toastText.length() * 15 + 54));
-        round(canvas, 320 - width / 2f, 846, width, 32, 6, withAlpha(color, Math.round(255 * alpha)), INK, 2);
-        text(canvas, toastText, 320, 862, 10, INK, Paint.Align.CENTER, true);
+        float y = layoutY(846);
+        round(canvas, 320 - width / 2f, y, width, 32, 6, withAlpha(color, Math.round(255 * alpha)), INK, 2);
+        text(canvas, toastText, 320, y + 16, 10, INK, Paint.Align.CENTER, true);
     }
 
     private void toast(String message, boolean good) {
@@ -1232,6 +1295,15 @@ final class GameView extends View {
     }
 
     private void drawCrop(Canvas canvas, int cropIndex, float x, float y, float s) {
+        if (assets.crops != null) {
+            int sourceSize = Math.max(1, assets.crops.getHeight());
+            int sourceX = Math.max(0, Math.min(cropIndex, GameData.CROPS.length - 1)) * sourceSize;
+            float size = 38f * s;
+            Rect source = new Rect(sourceX, 0, sourceX + sourceSize, sourceSize);
+            RectF target = new RectF(x - size / 2f, y - size / 2f, x + size / 2f, y + size / 2f);
+            canvas.drawBitmap(assets.crops, source, target, bitmapPaint);
+            return;
+        }
         GameData.Crop crop = GameData.crop(cropIndex);
         fill(canvas, x - 2 * s, y - 16 * s, 4 * s, 10 * s, GREEN_DARK);
         fill(canvas, x - 10 * s, y - 14 * s, 9 * s, 5 * s, GREEN);
@@ -1352,7 +1424,7 @@ final class GameView extends View {
         for (int i = 0; i < linkPath.size(); i++) {
             Point point = linkPath.get(i);
             float x = point.x < 0 ? 24 : point.x >= 6 ? 616 : 43 + point.x * 93 + 41;
-            float y = point.y < 0 ? 204 : point.y >= 8 ? 836 : 211 + point.y * 78 + 33;
+            float y = point.y < 0 ? layoutY(204) : point.y >= 8 ? layoutY(836) : layoutY(211 + point.y * 78) + 33;
             if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
         }
         canvas.drawPath(path, paint);
@@ -1381,9 +1453,58 @@ final class GameView extends View {
         fill(canvas, x + 13, y - 4, 43 * value / 100f, 7, color);
     }
 
+    private void drawPetCardStatus(Canvas canvas, int pet, float x, float y) {
+        float[] values = {state.petHunger[pet], state.petHappy[pet], state.petClean[pet]};
+        int[] colors = {CORAL, YELLOW, SKY};
+        String[] labels = {"饱", "乐", "净"};
+        for (int i = 0; i < 3; i++) {
+            float left = x + i * 27;
+            text(canvas, labels[i], left, y, 6, INK_SOFT, Paint.Align.LEFT, true);
+            fill(canvas, left + 8, y - 4, 17, 4, PAPER_2);
+            fill(canvas, left + 8, y - 4, 17 * values[i] / 100f, 4, colors[i]);
+        }
+    }
+
     private void drawPet(Canvas canvas, int type, float x, float y, float s, boolean acting) {
         long now = System.currentTimeMillis();
         float squash = acting ? 1f + (float) Math.sin(now / 90d) * 0.05f : 1f;
+        if (assets.petSprites != null) {
+            int column = 0;
+            if (acting) {
+                if (petAction == 0) column = 2;
+                else if (petAction == 2) column = 3;
+                else if (petAction == 3 || petAction == 4) column = 4;
+            } else if (state.petGardenUnlocked && y > layoutY(300) && y < layoutY(570)) {
+                column = 1;
+            }
+            int cellWidth = assets.petSprites.getWidth() / 6;
+            int cellHeight = assets.petSprites.getHeight() / 4;
+            int insetX = Math.max(1, Math.round(cellWidth * 0.035f));
+            int insetY = Math.max(2, Math.round(cellHeight * 0.055f));
+            Rect source = new Rect(
+                column * cellWidth + insetX,
+                type * cellHeight + insetY,
+                (column + 1) * cellWidth - insetX,
+                (type + 1) * cellHeight - insetY
+            );
+            float size = 105f * s;
+            float bob = acting
+                ? (float) Math.sin(now / 90d) * 3f
+                : (float) Math.sin(now / 430d + type) * 1.3f;
+            canvas.save();
+            canvas.translate(x, y - bob);
+            canvas.scale(1f, squash);
+            paint.setColor(Color.argb(45, 52, 70, 74));
+            canvas.drawOval(new RectF(-size * 0.34f, -size * 0.08f, size * 0.34f, size * 0.08f), paint);
+            canvas.drawBitmap(
+                assets.petSprites,
+                source,
+                new RectF(-size / 2f, -size, size / 2f, 0),
+                bitmapPaint
+            );
+            canvas.restore();
+            return;
+        }
         canvas.save();
         canvas.translate(x, y);
         canvas.scale(s, s * squash);
@@ -1424,6 +1545,50 @@ final class GameView extends View {
             fill(canvas, 5, -10, 5, 5, INK);
         }
         canvas.restore();
+    }
+
+    private void drawFacilitySprite(Canvas canvas, int column, int row, float x, float y, float size) {
+        if (assets.petFacilities == null) {
+            if (column == 1 && row == 0) drawKennel(canvas, x, y);
+            else if (column == 2 && row == 0) drawPond(canvas, x, y);
+            else if (column == 3 && row == 0) drawFeeder(canvas, x, y);
+            else if (column == 0 && row == 1) drawToyBox(canvas, x, y);
+            else if (column == 1 && row == 1) drawGrooming(canvas, x, y);
+            else if (column == 2 && row == 1) drawFlowerArch(canvas, x, y);
+            else if (column == 3 && row == 1) drawLamp(canvas, x, y);
+            else if (column == 0 && row == 2) drawPicnic(canvas, x, y);
+            return;
+        }
+        int cellWidth = assets.petFacilities.getWidth() / 4;
+        int cellHeight = assets.petFacilities.getHeight() / 3;
+        Rect source = new Rect(
+            column * cellWidth,
+            row * cellHeight,
+            (column + 1) * cellWidth,
+            (row + 1) * cellHeight
+        );
+        canvas.drawBitmap(
+            assets.petFacilities,
+            source,
+            new RectF(x - size / 2f, y - size / 2f, x + size / 2f, y + size / 2f),
+            bitmapPaint
+        );
+    }
+
+    private void drawBitmapCenterCrop(Canvas canvas, Bitmap bitmap, RectF target) {
+        float sourceAspect = bitmap.getWidth() / (float) bitmap.getHeight();
+        float targetAspect = target.width() / target.height();
+        Rect source;
+        if (sourceAspect > targetAspect) {
+            int sourceWidth = Math.round(bitmap.getHeight() * targetAspect);
+            int left = (bitmap.getWidth() - sourceWidth) / 2;
+            source = new Rect(left, 0, left + sourceWidth, bitmap.getHeight());
+        } else {
+            int sourceHeight = Math.round(bitmap.getWidth() / targetAspect);
+            int top = (bitmap.getHeight() - sourceHeight) / 2;
+            source = new Rect(0, top, bitmap.getWidth(), top + sourceHeight);
+        }
+        canvas.drawBitmap(bitmap, source, target, bitmapPaint);
     }
 
     private void drawKennel(Canvas canvas, float x, float y) {
@@ -1491,8 +1656,12 @@ final class GameView extends View {
 
     private Point matchCellAt(float x, float y) {
         int col = (int) ((x - 45) / 79);
-        int row = (int) ((y - 278) / 77);
-        return inside(row, col, 7, 7) ? new Point(col, row) : null;
+        if (col < 0 || col >= 7) return null;
+        for (int row = 0; row < 7; row++) {
+            float top = layoutY(278 + row * 77);
+            if (y >= top && y <= top + 68) return new Point(col, row);
+        }
+        return null;
     }
 
     private int remainingLinkTiles() {
@@ -1518,7 +1687,12 @@ final class GameView extends View {
     }
 
     private float plotCenterY(int index) {
-        return 237 + (index / 3) * 94 + 43;
+        return layoutY(237 + (index / 3) * 94) + 43;
+    }
+
+    private float layoutY(float baseY) {
+        float progress = Math.max(0f, Math.min(1f, (baseY - 153f) / 735f));
+        return baseY + layoutExtra * progress;
     }
 
     private String mergeName(int value) {
