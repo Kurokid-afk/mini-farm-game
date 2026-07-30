@@ -44,6 +44,9 @@
 - 主操作区、辅助图鉴和奖励信息使用明确的尺寸层级；同排面板共用边界，缩小窗口时文字仍保留内边距。
 - 退出时会保存当前页面、已种作物、自动化、宠物状态以及三种小游戏的完整残局；再次打开会回到原来的进度。
 - 升级 EXE 时沿用原应用标识和存档键，不会清空已有金币、农田或小游戏棋盘。
+- Windows 发布同时提供完整游戏 EXE 和独立更新器 EXE：新用户直接运行完整游戏，老用户退出游戏后运行更新器。
+- 更新器会优先读取上次运行路径，再搜索更新器同目录、桌面、下载、文档和固定磁盘；自动查找失败时可手动选择旧版 EXE。
+- 更新过程只替换程序文件，使用临时文件与备份回滚保护，不访问或删除本地存档目录。
 - 按 `F` 切换全屏，按 `Esc` 退出全屏。
 
 ## Android 版本
@@ -81,8 +84,10 @@ npm run test:android-logic
 npm run test:e2e
 npm run test:mobile
 npm run build
+npm run build:updater
+npm run test:updater
 powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify-android-apk.ps1
 ```
 
-Windows 安装包输出到 `release/UU田园合集.exe`，Android 安装包输出到 `release/UU-Harvest-Mobile.apk`。APK 验证脚本默认执行覆盖安装，保留设备现有进度，再检查冷启动、主要页面切换、种植、重启存档和崩溃日志；只有显式传入 `-CleanInstall` 才会卸载旧版。
+Windows 完整游戏输出到 `release/UU田园合集.exe`，老用户更新器输出到 `release/UU-Farm-Updater.exe`，Android 安装包输出到 `release/UU-Harvest-Mobile.apk`。APK 验证脚本默认执行覆盖安装，保留设备现有进度，再检查冷启动、主要页面切换、种植、重启存档和崩溃日志；只有显式传入 `-CleanInstall` 才会卸载旧版。

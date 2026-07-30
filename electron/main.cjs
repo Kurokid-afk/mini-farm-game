@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage } = require("electron");
+const fs = require("fs");
 const path = require("path");
 
 if (process.env.UU_TEST_USER_DATA_DIR) {
@@ -12,6 +13,18 @@ let alwaysOnTop = false;
 
 function assetPath(name) {
   return path.join(__dirname, "..", "build", name);
+}
+
+function recordExecutablePath() {
+  if (!app.isPackaged) return;
+  try {
+    const localAppData = process.env.LOCALAPPDATA || app.getPath("appData");
+    const locatorDirectory = path.join(localAppData, "UU小园");
+    fs.mkdirSync(locatorDirectory, { recursive: true });
+    fs.writeFileSync(path.join(locatorDirectory, "install-path.txt"), process.execPath, "utf8");
+  } catch {
+    // The updater also searches common folders, so a read-only location is not fatal.
+  }
 }
 
 function applyTopmost() {
@@ -82,6 +95,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  recordExecutablePath();
   createTray();
   createWindow();
 });
