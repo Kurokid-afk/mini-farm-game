@@ -1,6 +1,6 @@
 {
   "name": "uu-harvest-collection",
-  "version": "2.5.0",
+  "version": "2.5.2",
   "private": true,
   "description": "像素农场、宠物园与三种无限小游戏联动的桌面和原生 Android 合集",
   "main": "electron/main.cjs",

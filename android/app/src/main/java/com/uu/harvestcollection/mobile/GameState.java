@@ -54,6 +54,7 @@ final class GameState {
     int selectedPet = 0;
     float visitorCoins = 0f;
     long lastSeen = System.currentTimeMillis();
+    Session session = new Session();
 
     final int[] seeds = new int[GameData.CROPS.length];
     final int[] produce = new int[GameData.CROPS.length];
@@ -88,7 +89,7 @@ final class GameState {
     void save(Context context) {
         lastSeen = System.currentTimeMillis();
         SharedPreferences.Editor editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
-        editor.putString(SAVE, toJson().toString()).apply();
+        editor.putString(SAVE, toJson().toString()).commit();
     }
 
     int linkGoal() {
@@ -538,6 +539,7 @@ final class GameState {
             root.put("selectedPet", selectedPet);
             root.put("visitorCoins", visitorCoins);
             root.put("lastSeen", lastSeen);
+            root.put("session", session.toJson());
             root.put("seeds", intArray(seeds));
             root.put("produce", intArray(produce));
             root.put("quality", intArray(quality));
@@ -600,6 +602,7 @@ final class GameState {
         state.selectedPet = Math.max(0, Math.min(3, root.optInt("selectedPet", 0)));
         state.visitorCoins = Math.max(0f, (float) root.optDouble("visitorCoins", 0d));
         state.lastSeen = root.optLong("lastSeen", System.currentTimeMillis());
+        state.session = Session.fromJson(root.optJSONObject("session"));
         readInts(root.optJSONArray("seeds"), state.seeds);
         readInts(root.optJSONArray("produce"), state.produce);
         readInts(root.optJSONArray("quality"), state.quality);
@@ -647,6 +650,28 @@ final class GameState {
         return result;
     }
 
+    private static JSONArray intMatrix(int[][] source) {
+        JSONArray result = new JSONArray();
+        if (source == null) return result;
+        for (int[] row : source) result.put(intArray(row));
+        return result;
+    }
+
+    private static int[][] readMatrix(JSONArray source, int rows, int columns, int minimum, int maximum) {
+        if (source == null || source.length() != rows) return null;
+        int[][] result = new int[rows][columns];
+        for (int row = 0; row < rows; row++) {
+            JSONArray values = source.optJSONArray(row);
+            if (values == null || values.length() != columns) return null;
+            for (int column = 0; column < columns; column++) {
+                int value = values.optInt(column, minimum - 1);
+                if (value < minimum || value > maximum) return null;
+                result[row][column] = value;
+            }
+        }
+        return result;
+    }
+
     private static void readInts(JSONArray source, int[] target) {
         if (source == null) return;
         for (int i = 0; i < Math.min(source.length(), target.length); i++) target[i] = Math.max(0, source.optInt(i, target[i]));
@@ -661,6 +686,70 @@ final class GameState {
         if (source == null) return;
         for (int i = 0; i < Math.min(source.length(), target.length); i++) {
             target[i] = Math.max(0f, Math.min(100f, (float) source.optDouble(i, target[i])));
+        }
+    }
+
+    static final class Session {
+        int version = 1;
+        int view = 0;
+        int marketTab = 0;
+        int petPage = 0;
+        int[][] linkBoard;
+        int linkSelectedRow = -1;
+        int linkSelectedColumn = -1;
+        int linkScore = 0;
+        int linkBoards = 0;
+        int linkFlow = 0;
+        int[][] matchBoard;
+        int matchSelectedRow = -1;
+        int matchSelectedColumn = -1;
+        int matchScore = 0;
+        boolean mergeMode = false;
+        int[][] mergeBoard;
+        int mergeScore = 0;
+
+        JSONObject toJson() throws JSONException {
+            JSONObject value = new JSONObject();
+            value.put("version", version);
+            value.put("view", view);
+            value.put("marketTab", marketTab);
+            value.put("petPage", petPage);
+            value.put("linkBoard", intMatrix(linkBoard));
+            value.put("linkSelectedRow", linkSelectedRow);
+            value.put("linkSelectedColumn", linkSelectedColumn);
+            value.put("linkScore", linkScore);
+            value.put("linkBoards", linkBoards);
+            value.put("linkFlow", linkFlow);
+            value.put("matchBoard", intMatrix(matchBoard));
+            value.put("matchSelectedRow", matchSelectedRow);
+            value.put("matchSelectedColumn", matchSelectedColumn);
+            value.put("matchScore", matchScore);
+            value.put("mergeMode", mergeMode);
+            value.put("mergeBoard", intMatrix(mergeBoard));
+            value.put("mergeScore", mergeScore);
+            return value;
+        }
+
+        static Session fromJson(JSONObject source) {
+            Session session = new Session();
+            if (source == null || source.optInt("version", 0) != 1) return session;
+            session.view = Math.max(0, Math.min(4, source.optInt("view", 0)));
+            session.marketTab = Math.max(0, Math.min(2, source.optInt("marketTab", 0)));
+            session.petPage = Math.max(0, Math.min(2, source.optInt("petPage", 0)));
+            session.linkBoard = readMatrix(source.optJSONArray("linkBoard"), 8, 6, -1, 9);
+            session.linkSelectedRow = Math.max(-1, Math.min(7, source.optInt("linkSelectedRow", -1)));
+            session.linkSelectedColumn = Math.max(-1, Math.min(5, source.optInt("linkSelectedColumn", -1)));
+            session.linkScore = Math.max(0, source.optInt("linkScore", 0));
+            session.linkBoards = Math.max(0, source.optInt("linkBoards", 0));
+            session.linkFlow = Math.max(0, Math.min(3, source.optInt("linkFlow", 0)));
+            session.matchBoard = readMatrix(source.optJSONArray("matchBoard"), 7, 7, 0, 7);
+            session.matchSelectedRow = Math.max(-1, Math.min(6, source.optInt("matchSelectedRow", -1)));
+            session.matchSelectedColumn = Math.max(-1, Math.min(6, source.optInt("matchSelectedColumn", -1)));
+            session.matchScore = Math.max(0, source.optInt("matchScore", 0));
+            session.mergeMode = source.optBoolean("mergeMode", false);
+            session.mergeBoard = readMatrix(source.optJSONArray("mergeBoard"), 4, 4, 0, 30);
+            session.mergeScore = Math.max(0, source.optInt("mergeScore", 0));
+            return session;
         }
     }
 

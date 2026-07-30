@@ -8,12 +8,14 @@ import android.util.Log;
 
 final class PixelAssets {
     final Bitmap crops;
+    final Bitmap farmBackground;
     final Bitmap petGarden;
     final Bitmap petSprites;
     final Bitmap petFacilities;
 
     PixelAssets(Resources resources) {
         crops = decode(resources, R.drawable.crops);
+        farmBackground = decode(resources, R.drawable.farm_background);
         petGarden = decode(resources, R.drawable.pet_garden_bg);
         petSprites = removeCellBackgrounds(
             decode(resources, R.drawable.pet_sprites),
@@ -132,6 +134,7 @@ final class PixelAssets {
 
     private PixelAssets() {
         crops = null;
+        farmBackground = null;
         petGarden = null;
         petSprites = null;
         petFacilities = null;

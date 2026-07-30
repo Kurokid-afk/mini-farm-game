@@ -1,6 +1,7 @@
 param(
     [string]$ApkPath = "",
-    [string]$PackageName = "com.uu.harvestcollection.mobile"
+    [string]$PackageName = "com.uu.harvestcollection.mobile",
+    [switch]$CleanInstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,8 +23,12 @@ if (!($devices -match "\sdevice$")) {
     throw "No running Android device or emulator was found."
 }
 
-& $adb uninstall $PackageName 2>$null | Out-Null
-& $adb install $ApkPath
+if ($CleanInstall) {
+    & $adb uninstall $PackageName 2>$null | Out-Null
+    & $adb install $ApkPath
+} else {
+    & $adb install -r $ApkPath
+}
 if ($LASTEXITCODE -ne 0) {
     throw "APK installation failed."
 }
@@ -40,15 +45,20 @@ if ($activity -notmatch "topResumedActivity=.*$([regex]::Escape($PackageName))/.
     throw "MainActivity is not the active screen."
 }
 
-$sizeText = (& $adb shell wm size | Select-String "Physical size").Line
+$sizeLines = & $adb shell wm size
+$sizeMatch = $sizeLines | Select-String "Override size" | Select-Object -Last 1
+if (!$sizeMatch) {
+    $sizeMatch = $sizeLines | Select-String "Physical size" | Select-Object -Last 1
+}
+$sizeText = if ($sizeMatch) { $sizeMatch.Line } else { "" }
 if ($sizeText -notmatch "(\d+)x(\d+)") {
     throw "Could not determine the device screen size."
 }
 $width = [int]$Matches[1]
 $height = [int]$Matches[2]
 $windowDump = (& $adb shell dumpsys window windows) -join "`n"
-$bottomInset = [int]($height * 0.055)
-if ($windowDump -match "type=navigationBars[\s\S]{0,220}?bottom=(\d+)") {
+$bottomInset = [int]($height * 0.08)
+if ($windowDump -match "type=navigationBars[\s\S]{0,260}?insetsSize=Insets\{left=0, top=0, right=0, bottom=(\d+)\}") {
     $bottomInset = [int]$Matches[1]
 }
 $canvasScale = $width / 640.0
@@ -63,6 +73,8 @@ function Save-Screenshot([string]$Name) {
     & $adb pull $remote (Join-Path $output "$Name.png") | Out-Null
 }
 
+& $adb shell input tap ([int]($width * 0.10)) $navigationY
+Start-Sleep -Milliseconds 500
 Save-Screenshot "01-farm"
 
 $pages = @(
@@ -75,6 +87,14 @@ foreach ($page in $pages) {
     & $adb shell input tap ([int]($width * $page.X)) $navigationY
     Start-Sleep -Milliseconds 500
     Save-Screenshot $page.Name
+}
+
+$pageHashes = @(Get-ChildItem -LiteralPath $output -File |
+    Where-Object { $_.Name -match "^0[1-5]-.*\.png$" } |
+    Get-FileHash -Algorithm SHA256 |
+    Select-Object -ExpandProperty Hash -Unique)
+if ($pageHashes.Count -lt 4) {
+    throw "Page navigation did not produce distinct screens; check screen-size and inset detection."
 }
 
 & $adb shell input tap ([int]($width * 0.18)) ([int]($height * 0.35))

@@ -1,6 +1,10 @@
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage } = require("electron");
 const path = require("path");
 
+if (process.env.UU_TEST_USER_DATA_DIR) {
+  app.setPath("userData", process.env.UU_TEST_USER_DATA_DIR);
+}
+
 let mainWindow;
 let tray;
 let quitting = false;

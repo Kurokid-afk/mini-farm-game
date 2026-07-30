@@ -10,8 +10,8 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().setStatusBarColor(Color.rgb(146, 210, 202));
-        getWindow().setNavigationBarColor(Color.rgb(255, 248, 216));
+        getWindow().setStatusBarColor(Color.rgb(224, 243, 237));
+        getWindow().setNavigationBarColor(Color.rgb(252, 253, 247));
         gameView = new GameView(this);
         setContentView(gameView);
         gameView.setOnApplyWindowInsetsListener((view, insets) -> {

@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import cropSheetUrl from "./assets/crops.png?url";
+import farmBackgroundUrl from "./assets/farm-background.png?url";
 import petPortraitsUrl from "./assets/pet-portraits.png?url";
 import petSpritesUrl from "./assets/pet-sprites.png?url";
 import petFacilitiesUrl from "./assets/pet-facilities-v2.png?url";
@@ -13,27 +14,29 @@ const HEIGHT = MOBILE_LAYOUT ? 960 : 640;
 const SAVE_KEY = "uu-harvest-collection-v1";
 
 const C = {
-  ink: "#34464a",
-  inkSoft: "#61706f",
-  paper: "#fff8d8",
-  paper2: "#f3e9bd",
-  cream: "#fffdf0",
-  green: "#74bf70",
-  greenDark: "#3e8456",
-  greenSoft: "#b9dda0",
-  mint: "#9bd7cf",
-  coral: "#ee796b",
-  coralDark: "#bd4f4a",
-  yellow: "#f3c955",
-  yellowSoft: "#f8e7a2",
+  ink: "#304441",
+  inkSoft: "#5b6e69",
+  border: "#7c978f",
+  paper: "#fcfdf7",
+  paper2: "#e8ede4",
+  cream: "#fffffb",
+  green: "#68b775",
+  greenDark: "#357e52",
+  greenSoft: "#d4ebc5",
+  mint: "#e0f3ed",
+  coral: "#f1786c",
+  coralDark: "#be4c47",
+  coralSoft: "#ffe7e1",
+  yellow: "#f4c449",
+  yellowSoft: "#ffeeae",
   sky: "#7dc6d8",
   blue: "#4d93ad",
-  soil: "#a86549",
-  soilDark: "#75463c",
+  soil: "#b56f51",
+  soilDark: "#854e42",
   white: "#ffffff",
-  lock: "#91a391",
+  lock: "#8e9d96",
   purple: "#9c78b5",
-  shadow: "rgba(52,70,74,0.18)"
+  shadow: "rgba(48,68,65,0.14)"
 };
 
 const GAME_NAMES = {
@@ -114,6 +117,30 @@ function easeOut(value) {
   return 1 - Math.pow(1 - clamp01(value), 3);
 }
 
+function validBoard(board, rows, cols, isValueValid) {
+  return Array.isArray(board)
+    && board.length === rows
+    && board.every((row) => Array.isArray(row) && row.length === cols && row.every(isValueValid));
+}
+
+function cloneBoard(board) {
+  return board.map((row) => [...row]);
+}
+
+function wholeNumber(value, fallback = 0, maximum = Number.MAX_SAFE_INTEGER) {
+  return Number.isInteger(value) ? Math.max(0, Math.min(maximum, value)) : fallback;
+}
+
+function validCell(cell, rows, cols) {
+  return cell
+    && Number.isInteger(cell.row)
+    && Number.isInteger(cell.col)
+    && cell.row >= 0
+    && cell.row < rows
+    && cell.col >= 0
+    && cell.col < cols;
+}
+
 class HarvestCollection {
   constructor(scene) {
     this.scene = scene;
@@ -134,12 +161,16 @@ class HarvestCollection {
     this.mobileMarketPage = 0;
     this.petShopTab = "pets";
     this.mobilePetPage = 0;
+    this.restoreSession(this.state.session);
     this.touchStart = null;
     this.lastRobotScan = 0;
     this.frameNow = this.now();
     this.cropSheet = new Image();
     this.cropSheet.src = cropSheetUrl;
     this.cropSheet.onload = () => this.render();
+    this.farmBackground = new Image();
+    this.farmBackground.src = farmBackgroundUrl;
+    this.farmBackground.onload = () => this.render();
     this.petPortraits = new Image();
     this.petPortraits.src = petPortraitsUrl;
     this.petPortraits.onload = () => this.render();
@@ -227,8 +258,162 @@ class HarvestCollection {
     const now = Date.now();
     if (!force && now - this.lastSaveAt < 1500) return;
     this.state.lastSeen = this.now();
+    this.state.session = this.createSessionSnapshot();
     localStorage.setItem(SAVE_KEY, JSON.stringify(this.state));
     this.lastSaveAt = now;
+  }
+
+  createSessionSnapshot() {
+    const snapshot = {
+      version: 1,
+      puzzleMode: this.puzzleMode,
+      marketTab: this.marketTab,
+      mobileMarketPage: this.mobileMarketPage,
+      petShopTab: this.petShopTab,
+      mobilePetPage: this.mobilePetPage,
+      link: null,
+      match3: null,
+      merge: null
+    };
+    if (this.link) {
+      snapshot.link = {
+        board: cloneBoard(this.link.board),
+        selected: this.link.selected ? { ...this.link.selected } : null,
+        score: this.link.score,
+        combo: this.link.combo,
+        bestCombo: this.link.bestCombo,
+        clearedBoards: this.link.clearedBoards,
+        matchedPairs: this.link.matchedPairs,
+        rewardPairs: this.link.rewardPairs,
+        rewards: this.link.rewards,
+        flowMode: this.link.flowMode,
+        pendingFinish: this.link.pendingFinish,
+        pendingShuffle: this.link.pendingShuffle
+      };
+    }
+    if (this.match3) {
+      snapshot.match3 = {
+        board: cloneBoard(this.match3.board),
+        palette: [...this.match3.palette],
+        selected: this.match3.selected ? { ...this.match3.selected } : null,
+        score: this.match3.score,
+        targetColor: this.match3.targetColor,
+        target: this.match3.target,
+        collected: this.match3.collected,
+        combo: this.match3.combo,
+        bestCombo: this.match3.bestCombo,
+        milestones: this.match3.milestones,
+        rewards: this.match3.rewards,
+        pendingMilestone: this.match3.pendingMilestone,
+        pendingShuffle: this.match3.pendingShuffle
+      };
+    }
+    if (this.merge) {
+      snapshot.merge = {
+        board: cloneBoard(this.merge.board),
+        score: this.merge.score,
+        maxValue: this.merge.maxValue,
+        merges: this.merge.merges,
+        rewardMerges: this.merge.rewardMerges,
+        rewards: this.merge.rewards
+      };
+    }
+    return snapshot;
+  }
+
+  restoreSession(snapshot) {
+    if (!snapshot || snapshot.version !== 1) return;
+    this.puzzleMode = snapshot.puzzleMode === "merge" ? "merge" : "match3";
+    this.marketTab = ["growth", "automation", "research"].includes(snapshot.marketTab) ? snapshot.marketTab : "growth";
+    this.mobileMarketPage = wholeNumber(snapshot.mobileMarketPage, 0, 10);
+    this.petShopTab = ["pets", "facilities", "decor"].includes(snapshot.petShopTab) ? snapshot.petShopTab : "pets";
+    this.mobilePetPage = wholeNumber(snapshot.mobilePetPage, 0, 10);
+    this.link = this.restoreLinkSession(snapshot.link);
+    this.match3 = this.restoreMatchSession(snapshot.match3);
+    this.merge = this.restoreMergeSession(snapshot.merge);
+  }
+
+  restoreLinkSession(saved) {
+    if (!saved || !validBoard(saved.board, 5, 8, (value) => value == null || (Number.isInteger(value) && value >= 0 && value < LINK_SYMBOLS.length))) {
+      return null;
+    }
+    const board = cloneBoard(saved.board);
+    const selected = validCell(saved.selected, 5, 8) && board[saved.selected.row][saved.selected.col] != null
+      ? { row: saved.selected.row, col: saved.selected.col }
+      : null;
+    return {
+      rows: 5,
+      cols: 8,
+      board,
+      selected,
+      score: wholeNumber(saved.score),
+      combo: wholeNumber(saved.combo),
+      bestCombo: wholeNumber(saved.bestCombo),
+      clearedBoards: wholeNumber(saved.clearedBoards),
+      matchedPairs: wholeNumber(saved.matchedPairs),
+      rewardPairs: wholeNumber(saved.rewardPairs, 0, 7),
+      rewards: wholeNumber(saved.rewards),
+      flowMode: LINK_FLOW_MODES.some((mode) => mode.id === saved.flowMode) ? saved.flowMode : "down",
+      lastPath: null,
+      lastMatch: null,
+      invalidMatch: null,
+      shiftAnimation: null,
+      hint: null,
+      selectedAt: 0,
+      lockedUntil: 0,
+      pendingFinish: Boolean(saved.pendingFinish),
+      pendingShuffle: Boolean(saved.pendingShuffle)
+    };
+  }
+
+  restoreMatchSession(saved) {
+    const validPalette = Array.isArray(saved?.palette)
+      && saved.palette.length === 7
+      && new Set(saved.palette).size === 7
+      && saved.palette.every((value) => Number.isInteger(value) && value >= 0 && value < MATCH_TILES.length);
+    if (!saved || !validPalette || !validBoard(saved.board, 7, 7, (value) => Number.isInteger(value) && saved.palette.includes(value))) {
+      return null;
+    }
+    const board = cloneBoard(saved.board);
+    const selected = validCell(saved.selected, 7, 7)
+      ? { row: saved.selected.row, col: saved.selected.col }
+      : null;
+    return {
+      board,
+      palette: [...saved.palette],
+      selected,
+      score: wholeNumber(saved.score),
+      targetColor: saved.palette.includes(saved.targetColor) ? saved.targetColor : saved.palette[0],
+      target: Math.max(8, wholeNumber(saved.target, 10, 100)),
+      collected: wholeNumber(saved.collected),
+      combo: wholeNumber(saved.combo),
+      bestCombo: wholeNumber(saved.bestCombo),
+      milestones: wholeNumber(saved.milestones),
+      rewards: wholeNumber(saved.rewards),
+      selectedAt: 0,
+      animation: null,
+      lockedUntil: 0,
+      pendingMilestone: Boolean(saved.pendingMilestone),
+      pendingShuffle: Boolean(saved.pendingShuffle)
+    };
+  }
+
+  restoreMergeSession(saved) {
+    if (!saved || !validBoard(saved.board, 4, 4, (value) => value == null || (Number.isInteger(value) && value >= 1 && value <= 30))) {
+      return null;
+    }
+    const board = cloneBoard(saved.board);
+    if (board.flat().every((value) => value == null)) return null;
+    return {
+      board,
+      score: wholeNumber(saved.score),
+      maxValue: Math.max(1, wholeNumber(saved.maxValue, 1, 30)),
+      merges: wholeNumber(saved.merges),
+      rewardMerges: wholeNumber(saved.rewardMerges, 0, 7),
+      rewards: wholeNumber(saved.rewards),
+      animation: null,
+      lockedUntil: 0
+    };
   }
 
   update(dt, shouldRender = true) {
@@ -369,8 +554,8 @@ class HarvestCollection {
       ctx.fill();
     }
     if (stroke) {
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = line;
+      ctx.strokeStyle = stroke === C.ink ? C.border : stroke;
+      ctx.lineWidth = stroke === C.ink ? Math.min(line, 1.5) : line;
       ctx.stroke();
     }
   }
@@ -411,6 +596,33 @@ class HarvestCollection {
     }
   }
 
+  drawImageCover(image, x, y, w, h, radius = 0) {
+    if (!image?.complete || !image.naturalWidth || !image.naturalHeight) return false;
+    const sourceRatio = image.naturalWidth / image.naturalHeight;
+    const targetRatio = w / h;
+    let sw = image.naturalWidth;
+    let sh = image.naturalHeight;
+    let sx = 0;
+    let sy = 0;
+    if (sourceRatio > targetRatio) {
+      sw = Math.round(sh * targetRatio);
+      sx = Math.round((image.naturalWidth - sw) / 2);
+    } else {
+      sh = Math.round(sw / targetRatio);
+      sy = Math.round((image.naturalHeight - sh) / 2);
+    }
+    this.ctx.save();
+    if (radius > 0) {
+      this.ctx.beginPath();
+      this.ctx.roundRect(x, y, w, h, radius);
+      this.ctx.clip();
+    }
+    this.ctx.imageSmoothingEnabled = false;
+    this.ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h);
+    this.ctx.restore();
+    return true;
+  }
+
   text(value, x, y, size = 14, color = C.ink, align = "left", weight = 700, baseline = "middle") {
     const ctx = this.ctx;
     const readableSize = Math.max(12, size);
@@ -439,8 +651,9 @@ class HarvestCollection {
     const hit = this.addHit(type, x, y, w, h, data);
     const disabled = Boolean(options.disabled);
     const fill = disabled ? C.paper2 : options.fill || (this.isHover(hit) ? C.yellowSoft : C.cream);
-    this.rounded(x, y, w, h, options.radius ?? 6, fill, options.stroke || C.ink, options.line || 2);
-    this.text(label, x + w / 2, y + h / 2 + 1, options.size || 13, disabled ? C.lock : options.color || C.ink, "center", 800);
+    this.rounded(x, y, w, h, options.radius ?? 6, fill, options.stroke || C.border, options.line || 1.25);
+    const labelColor = disabled ? C.lock : options.color || (fill === C.coral ? C.white : C.ink);
+    this.text(label, x + w / 2, y + h / 2 + 1, options.size || 13, labelColor, "center", 800);
     hit.disabled = disabled;
     return hit;
   }
@@ -518,9 +731,9 @@ class HarvestCollection {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
     this.rect(0, 0, WIDTH, HEIGHT, C.mint);
-    for (let y = 0; y < HEIGHT; y += 24) {
-      for (let x = (y / 24) % 2 ? 12 : 0; x < WIDTH; x += 24) {
-        this.rect(x, y, 2, 2, "rgba(255,255,255,0.22)");
+    for (let y = 0; y < HEIGHT; y += 32) {
+      for (let x = (y / 32) % 2 ? 16 : 0; x < WIDTH; x += 32) {
+        this.rect(x, y, 1.5, 1.5, "rgba(255,255,255,0.18)");
       }
     }
   }
@@ -563,9 +776,9 @@ class HarvestCollection {
       const hit = this.addHit("nav", x, 83, 182, 45, { view });
       const active = this.state.view === view;
       const petLocked = view === "pets" && !this.state.petGarden.unlocked;
-      this.rounded(x, 83, 182, 45, 6, active ? C.coral : this.isHover(hit) ? C.yellowSoft : petLocked ? C.paper2 : C.paper, C.ink, 2);
+      this.rounded(x, 83, 182, 45, 6, active ? C.coralSoft : this.isHover(hit) ? C.yellowSoft : petLocked ? C.paper2 : C.paper, C.border, 1.25);
       this.drawNavIcon(view, x + 29, 106, active);
-      this.text(petLocked ? "宠物园·锁" : GAME_NAMES[view], x + 102, 106, petLocked ? 11 : 13, active ? C.white : petLocked ? C.lock : C.ink, "center", 900);
+      this.text(petLocked ? "宠物园·锁" : GAME_NAMES[view], x + 102, 106, petLocked ? 11 : 13, active ? C.coralDark : petLocked ? C.lock : C.ink, "center", 900);
       if (["link", "match3"].includes(view)) {
         const done = this.state.festival[view];
         this.circle(x + 167, 96, 6, done ? C.yellow : C.paper2, C.ink, 1);
@@ -574,8 +787,8 @@ class HarvestCollection {
   }
 
   drawNavIcon(view, x, y, active) {
-    const primary = active ? C.white : C.greenDark;
-    const secondary = active ? C.yellowSoft : C.coral;
+    const primary = active ? C.coralDark : C.greenDark;
+    const secondary = active ? C.yellow : C.coral;
     if (view === "farm") {
       for (let row = 0; row < 2; row += 1) {
         for (let col = 0; col < 2; col += 1) this.rect(x - 10 + col * 11, y - 10 + row * 11, 8, 8, primary, C.ink, 1);
@@ -640,13 +853,17 @@ class HarvestCollection {
 
   drawMobileNav() {
     const views = ["farm", "link", "match3", "market", "pets"];
-    this.rect(0, 888, WIDTH, 72, C.paper, C.ink, 2);
+    this.rect(0, 888, WIDTH, 72, C.paper);
+    this.line(0, 888, WIDTH, 888, C.border, 1.5);
     views.forEach((view, index) => {
       const x = 4 + index * 127;
       const active = this.state.view === view;
       const petLocked = view === "pets" && !this.state.petGarden.unlocked;
       const hit = this.addHit("nav", x, 892, 123, 64, { view });
-      if (active) this.rounded(x + 4, 896, 115, 56, 6, C.coral);
+      if (active) {
+        this.rounded(x + 4, 895, 115, 57, 7, C.coralSoft);
+        this.rounded(x + 27, 895, 69, 3, 2, C.coral);
+      }
       else if (this.isHover(hit)) this.rounded(x + 4, 896, 115, 56, 6, C.yellowSoft);
       this.drawNavIcon(view, x + 61, 914, active);
       this.text(
@@ -654,7 +871,7 @@ class HarvestCollection {
         x + 61,
         942,
         10,
-        active ? C.white : petLocked ? C.lock : C.ink,
+        active ? C.coralDark : petLocked ? C.lock : C.ink,
         "center",
         900
       );
@@ -667,6 +884,7 @@ class HarvestCollection {
   drawMobileTitle(title, subtitle = "") {
     this.text(title, 18, 134, 18, C.ink, "left", 900);
     if (subtitle) this.text(subtitle, 622, 134, 10, C.greenDark, "right", 700);
+    this.rounded(18, 147, 46, 3, 2, C.coral);
   }
 
   renderMobile() {
@@ -1219,34 +1437,33 @@ class HarvestCollection {
   }
 
   drawPlots() {
-    const startX = 18;
-    const startY = 238;
-    const w = 143;
-    const h = 82;
-    const gap = 10;
+    const scene = { x: 14, y: 234, w: 610, h: 286 };
+    if (!this.drawImageCover(this.farmBackground, scene.x, scene.y, scene.w, scene.h, 7)) {
+      this.rounded(scene.x, scene.y, scene.w, scene.h, 7, C.greenSoft);
+    }
+    this.rounded(scene.x, scene.y, scene.w, scene.h, 7, null, C.border, 1.25);
     for (let index = 0; index < Core.PLOT_COUNT; index += 1) {
-      const col = index % 4;
-      const row = Math.floor(index / 4);
-      const x = startX + col * (w + gap);
-      const y = startY + row * (h + gap);
+      const { x, y, w, h } = this.plotBounds(index);
       const unlocked = index < this.state.unlockedPlots;
       const plot = this.state.plots[index];
       const hit = this.addHit("plot", x, y, w, h, { index });
-      const fill = unlocked ? C.soil : index === this.state.unlockedPlots ? C.greenSoft : "#90aa8b";
-      this.rounded(x, y, w, h, 5, fill, C.ink, 2);
 
       if (!unlocked) {
-        this.text("🔒", x + w / 2, y + 32, 20, C.ink, "center", 800);
-        if (index === this.state.unlockedPlots) {
-          this.text(`解锁 ￥${Core.nextLandCost(this.state)}`, x + w / 2, y + 61, 10, C.ink, "center", 800);
-        } else {
-          this.text("先解锁前一块", x + w / 2, y + 61, 9, C.paper, "center", 700);
+        if (index !== this.state.unlockedPlots) {
+          hit.disabled = true;
+          continue;
         }
+        this.rounded(x + 7, y + 19, w - 14, 40, 6, "rgba(48,68,65,0.16)");
+        this.rounded(x + 7, y + 16, w - 14, 40, 6, C.paper, C.border, 1.25);
+        this.text(`扩建 ￥${Core.nextLandCost(this.state)}`, x + w / 2, y + 36, 10, C.greenDark, "center", 800);
         continue;
       }
 
-      this.line(x + 12, y + 26, x + w - 12, y + 26, C.soilDark, 3);
-      this.line(x + 12, y + 53, x + w - 12, y + 53, C.soilDark, 3);
+      this.rounded(x + 2, y + 3, w, h, 6, "rgba(48,68,65,0.16)");
+      this.rounded(x, y, w, h, 6, "#cc9152", "#896040", 1.25);
+      this.rounded(x + 4, y + 5, w - 8, h - 10, 4, C.soil);
+      this.line(x + 10, y + 25, x + w - 10, y + 25, C.soilDark, 2);
+      this.line(x + 10, y + 51, x + w - 10, y + 51, C.soilDark, 2);
       for (let soil = 0; soil < plot.soil; soil += 1) this.circle(x + 12 + soil * 10, y + 11, 3, C.yellow, C.ink, 1);
       if (plot.crop) {
         const crop = Core.cropById(plot.crop.cropId);
@@ -1296,7 +1513,7 @@ class HarvestCollection {
         this.rect(x + 27, y + h - 12, (w - 54) * progress, 6, progress >= 1 ? C.yellow : C.green);
         this.text(progress >= 1 ? "成熟" : Core.formatDuration(plot.crop.finishAt - this.frameNow), x + w / 2, y + h - 21, 9, C.paper, "center", 800);
       } else {
-        this.text("空土地", x + w / 2, y + 42, 10, "rgba(255,248,216,0.72)", "center", 700);
+        // Empty soil is intentionally left unlabelled so the farm reads as a scene.
       }
     }
     this.drawAutomationRobots();
@@ -1314,13 +1531,13 @@ class HarvestCollection {
         h
       };
     }
-    const w = 143;
-    const h = 82;
-    const gap = 10;
+    const h = 78;
+    const gapX = 14;
+    const gapY = 14;
     return {
-      x: 18 + (index % 4) * (w + gap),
-      y: 238 + Math.floor(index / 4) * (h + gap),
-      w,
+      x: 28 + (index % 4) * (132 + gapX),
+      y: 248 + Math.floor(index / 4) * (h + gapY),
+      w: 132,
       h
     };
   }
@@ -4277,9 +4494,10 @@ class HarvestCollection {
     this.rounded(-size / 2 + 3, -size / 2 + 4, size, size, 7, "rgba(52,70,74,0.16)");
     this.rounded(-size / 2, -size / 2, size, size, 7, style.color, C.ink, 2);
     this.rounded(-size / 2 + 5, -size / 2 + 5, size - 10, 8, 3, "rgba(255,255,255,0.32)");
-    this.text(style.label, 0, -13, 18, style.ink, "center", 900);
-    this.text(String(2 ** value), 0, 10, 15, C.white, "center", 900);
-    this.text(style.name, 0, 27, 9, style.ink, "center", 800);
+    const compact = size < 64;
+    this.text(style.label, 0, compact ? -8 : -13, compact ? 13 : 18, style.ink, "center", 900);
+    this.text(String(2 ** value), 0, compact ? 13 : 10, compact ? 11 : 15, C.white, "center", 900);
+    if (!compact) this.text(style.name, 0, 27, 9, style.ink, "center", 800);
     this.ctx.restore();
   }
 
@@ -4287,7 +4505,7 @@ class HarvestCollection {
     const animation = this.merge.animation?.until > this.frameNow ? this.merge.animation : null;
     for (let row = 0; row < 4; row += 1) {
       for (let col = 0; col < 4; col += 1) {
-        this.rounded(startX + col * cell + 3, startY + row * cell + 3, cell - 6, cell - 6, 6, "#f8efca", C.paper2, 1);
+        this.rounded(startX + col * cell + 3, startY + row * cell + 3, cell - 6, cell - 6, 6, C.paper2, C.border, 1);
       }
     }
     if (!animation) {
@@ -4346,38 +4564,40 @@ class HarvestCollection {
     this.text(`印章 ${this.merge.rewardMerges}/8 次`, 306, 191, 11, C.greenDark, "left", 800);
     this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 470, 191, 11, C.ink, "left", 800);
 
-    const startX = 58;
-    const startY = 225;
+    const panelY = 223;
+    const panelHeight = 378;
+    const startX = 84;
+    const startY = 235;
     const cell = 88;
-    this.rounded(startX - 12, startY - 12, cell * 4 + 24, cell * 4 + 24, 7, C.paper2, C.ink, 3);
+    this.rounded(20, panelY, 480, panelHeight, 7, C.cream, C.border, 1.5);
     this.drawMergeBoard(startX, startY, cell);
 
-    this.rounded(442, 223, 498, 378, 7, C.cream, C.ink, 2);
-    this.text("成长图谱", 466, 251, 15, C.ink, "left", 900);
+    this.rounded(514, panelY, 426, 108, 7, C.cream, C.border, 1.25);
+    this.text("成长图谱", 534, 245, 13, C.ink, "left", 900);
     for (let index = 0; index < 6; index += 1) {
-      const x = 474 + index * 72;
-      this.drawMergeTile(index + 1, x, 292, 54, { alpha: index + 1 <= this.merge.maxValue + 1 ? 1 : 0.4 });
-      if (index < 5) this.text("›", x + 36, 292, 17, C.inkSoft, "center", 900);
+      const x = 548 + index * 61;
+      this.drawMergeTile(index + 1, x, 292, 46, { alpha: index + 1 <= this.merge.maxValue + 1 ? 1 : 0.4 });
+      if (index < 5) this.text("›", x + 31, 292, 13, C.inkSoft, "center", 900);
     }
-    this.line(464, 334, 918, 334, C.paper2, 2);
-    this.text("滑动方向", 466, 359, 13, C.ink, "left", 900);
-    this.button("↑", 740, 348, 56, 45, "merge-move", { direction: "up" }, { fill: C.greenSoft, size: 20 });
-    this.button("←", 676, 399, 56, 45, "merge-move", { direction: "left" }, { fill: C.paper, size: 20 });
-    this.button("↓", 740, 399, 56, 45, "merge-move", { direction: "down" }, { fill: C.greenSoft, size: 20 });
-    this.button("→", 804, 399, 56, 45, "merge-move", { direction: "right" }, { fill: C.paper, size: 20 });
-    this.rounded(464, 470, 454, 104, 6, C.paper, C.ink, 1);
-    this.text("循环奖励", 482, 492, 12, C.ink, "left", 900);
-    this.text(`再合成 ${8 - this.merge.rewardMerges} 次：订单印章`, 482, 518, 11, C.greenDark, "left", 800);
+    this.rounded(514, 341, 426, 107, 7, C.cream, C.border, 1.25);
+    this.text("移动方向", 534, 363, 12, C.ink, "left", 900);
+    this.button("↑", 736, 350, 52, 38, "merge-move", { direction: "up" }, { fill: C.greenSoft, size: 18 });
+    this.button("←", 678, 394, 52, 38, "merge-move", { direction: "left" }, { fill: C.paper, size: 18 });
+    this.button("↓", 736, 394, 52, 38, "merge-move", { direction: "down" }, { fill: C.greenSoft, size: 18 });
+    this.button("→", 794, 394, 52, 38, "merge-move", { direction: "right" }, { fill: C.paper, size: 18 });
+    this.rounded(514, 460, 426, 141, 7, C.cream, C.border, 1.25);
+    this.text("循环奖励", 534, 483, 12, C.ink, "left", 900);
+    this.text(`再合成 ${8 - this.merge.rewardMerges} 次：订单印章`, 534, 512, 11, C.greenDark, "left", 800);
     this.text(
       `庆典益智：${this.state.festival.match3 ? "本轮已完成" : `${this.state.festivalProgress.match3}/${this.state.festivalGoals.match3} 格`}`,
-      482,
-      543,
+      534,
+      540,
       11,
       C.coralDark,
       "left",
       800
     );
-    this.text(`本次已领取印章 ${this.merge.rewards}`, 482, 563, 9, C.inkSoft, "left", 700);
+    this.text(`本次已领取印章 ${this.merge.rewards}`, 534, 568, 9, C.inkSoft, "left", 700);
   }
 
   drawPuzzleTabs() {
@@ -4871,6 +5091,10 @@ class MainScene extends Phaser.Scene {
         appInstance.match3 = null;
         appInstance.merge = null;
         appInstance.puzzleMode = "match3";
+        appInstance.marketTab = "growth";
+        appInstance.mobileMarketPage = 0;
+        appInstance.petShopTab = "pets";
+        appInstance.mobilePetPage = 0;
         appInstance.actionEffects = [];
         appInstance.maturePlots = new Set();
         appInstance.switchView("farm");
