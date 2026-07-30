@@ -1,6 +1,6 @@
 {
   "name": "uu-harvest-collection",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "private": true,
   "description": "像素农场、宠物园与三种无限小游戏联动的桌面和原生 Android 合集",
   "main": "electron/main.cjs",
@@ -11,6 +11,7 @@
     "build:web": "vite build",
     "build": "npm run assets && npm run build:web && electron-builder --win portable",
     "test:logic": "node tests/core.test.cjs",
+    "test:android-logic": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-android-logic.ps1",
     "test:e2e": "node tests/e2e.mjs",
     "test:mobile": "node tests/mobile-e2e.mjs",
     "test:electron": "node tests/electron-e2e.mjs"

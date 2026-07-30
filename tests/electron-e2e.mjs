@@ -46,19 +46,47 @@ const topmost = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWi
 assert.equal(topmost, true);
 
 await page.evaluate(() => {
+  const state = window.__uuHarvest.getState();
+  state.view = "match3";
+  state.session = {
+    version: 1,
+    puzzleMode: "merge",
+    merge: {
+      board: [
+        [11, 4, null, null],
+        [3, 2, null, null],
+        [null, null, null, null],
+        [null, null, null, null]
+      ],
+      score: 8192,
+      maxValue: 11
+    }
+  };
+  localStorage.setItem("uu-harvest-collection-v1", JSON.stringify(state));
+});
+await page.reload();
+await page.waitForFunction(() => Boolean(window.__uuHarvest));
+const migratedMerge = await page.evaluate(() => window.__uuHarvest.app.merge);
+assert.equal(migratedMerge.score, 0);
+assert.equal(migratedMerge.board.flat().filter((value) => value != null).length, 2);
+assert.ok(migratedMerge.board.flat().filter((value) => value != null).every((value) => value === 1 || value === 2));
+
+await page.evaluate(() => {
   const game = window.__uuHarvest.app;
   game.switchView("match3");
   game.puzzleMode = "merge";
   game.ensureMiniGame("link");
   game.ensureMiniGame("match3");
   game.merge.board = [
-    [11, 4, null, null],
+    [6, 4, null, null],
     [3, 2, null, null],
     [null, null, null, null],
     [null, null, null, null]
   ];
-  game.merge.score = 8192;
-  game.merge.maxValue = 11;
+  game.merge.score = 2048;
+  game.merge.maxValue = 6;
+  game.merge.gameOver = false;
+  game.merge.rewardClaimed = false;
   game.link.board[0][0] = null;
   game.link.score = 2340;
   game.match3.score = 4560;
@@ -73,8 +101,9 @@ await page.evaluate(() => {
   game.save(true);
 });
 const persistedSession = await page.evaluate(() => JSON.parse(localStorage.getItem("uu-harvest-collection-v1")).session);
-assert.equal(persistedSession.version, 1);
-assert.equal(persistedSession.merge.board[0][0], 11);
+assert.equal(persistedSession.version, 2);
+assert.equal(persistedSession.merge.ruleVersion, 2);
+assert.equal(persistedSession.merge.board[0][0], 6);
 await page.reload();
 await page.waitForFunction(() => Boolean(window.__uuHarvest));
 const restored = await page.evaluate(() => {
@@ -98,8 +127,8 @@ assert.equal(restored.hasMatch, true);
 assert.equal(restored.hasMerge, true);
 assert.equal(restored.view, "match3");
 assert.equal(restored.puzzleMode, "merge");
-assert.equal(restored.mergeBoard[0][0], 11);
-assert.equal(restored.mergeScore, 8192);
+assert.equal(restored.mergeBoard[0][0], 6);
+assert.equal(restored.mergeScore, 2048);
 assert.equal(restored.linkCell, null);
 assert.equal(restored.linkScore, 2340);
 assert.equal(restored.matchScore, 4560);

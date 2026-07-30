@@ -408,6 +408,22 @@ final class GameState {
         finishFestivalIfReady();
     }
 
+    Result awardMergeScore(int score) {
+        GameData.MergeReward reward = GameData.mergeReward(score);
+        coins += reward.coins;
+        totalEarned += reward.coins;
+        orderSeals += reward.orderSeals;
+        sun += reward.sun;
+        festivalMatch = Math.min(matchGoal(), festivalMatch + reward.festival);
+        festivalMatchDone = festivalMatch >= matchGoal();
+        finishFestivalIfReady();
+        return Result.ok(
+            "本局奖励：金币 +" + reward.coins
+                + (reward.orderSeals > 0 ? "，印章 +" + reward.orderSeals : "")
+                + (reward.sun > 0 ? "，阳光 +" + reward.sun : "")
+        );
+    }
+
     private void awardMiniGift() {
         miniGiftProgress++;
         if (miniGiftProgress < 3) return;
@@ -690,7 +706,7 @@ final class GameState {
     }
 
     static final class Session {
-        int version = 1;
+        int version = 2;
         int view = 0;
         int marketTab = 0;
         int petPage = 0;
@@ -707,6 +723,8 @@ final class GameState {
         boolean mergeMode = false;
         int[][] mergeBoard;
         int mergeScore = 0;
+        boolean mergeGameOver = false;
+        boolean mergeRewardClaimed = false;
 
         JSONObject toJson() throws JSONException {
             JSONObject value = new JSONObject();
@@ -727,12 +745,16 @@ final class GameState {
             value.put("mergeMode", mergeMode);
             value.put("mergeBoard", intMatrix(mergeBoard));
             value.put("mergeScore", mergeScore);
+            value.put("mergeGameOver", mergeGameOver);
+            value.put("mergeRewardClaimed", mergeRewardClaimed);
             return value;
         }
 
         static Session fromJson(JSONObject source) {
             Session session = new Session();
-            if (source == null || source.optInt("version", 0) != 1) return session;
+            if (source == null) return session;
+            int savedVersion = source.optInt("version", 0);
+            if (savedVersion < 1 || savedVersion > 2) return session;
             session.view = Math.max(0, Math.min(4, source.optInt("view", 0)));
             session.marketTab = Math.max(0, Math.min(2, source.optInt("marketTab", 0)));
             session.petPage = Math.max(0, Math.min(2, source.optInt("petPage", 0)));
@@ -747,8 +769,12 @@ final class GameState {
             session.matchSelectedColumn = Math.max(-1, Math.min(6, source.optInt("matchSelectedColumn", -1)));
             session.matchScore = Math.max(0, source.optInt("matchScore", 0));
             session.mergeMode = source.optBoolean("mergeMode", false);
-            session.mergeBoard = readMatrix(source.optJSONArray("mergeBoard"), 4, 4, 0, 30);
-            session.mergeScore = Math.max(0, source.optInt("mergeScore", 0));
+            if (savedVersion >= 2) {
+                session.mergeBoard = readMatrix(source.optJSONArray("mergeBoard"), 4, 4, 0, 30);
+                session.mergeScore = Math.max(0, source.optInt("mergeScore", 0));
+                session.mergeGameOver = source.optBoolean("mergeGameOver", false);
+                session.mergeRewardClaimed = source.optBoolean("mergeRewardClaimed", false);
+            }
             return session;
         }
     }

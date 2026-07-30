@@ -18,8 +18,8 @@ android {
         applicationId "com.uu.harvestcollection.mobile"
         minSdkVersion 24
         targetSdkVersion 35
-        versionCode 252
-        versionName "2.5.2"
+        versionCode 253
+        versionName "2.5.3"
     }
 
     signingConfigs {

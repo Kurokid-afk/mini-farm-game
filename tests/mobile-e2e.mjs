@@ -52,6 +52,16 @@ async function tap(x, y) {
   await page.waitForTimeout(100);
 }
 
+async function swipe(fromX, fromY, toX, toY) {
+  const box = await page.locator("canvas").boundingBox();
+  const mapX = (value) => box.x + value / 640 * box.width;
+  const mapY = (value) => box.y + value / 960 * box.height;
+  await page.mouse.move(mapX(fromX), mapY(fromY));
+  await page.mouse.down();
+  await page.mouse.move(mapX(toX), mapY(toY), { steps: 6 });
+  await page.mouse.up();
+}
+
 async function shot(name) {
   await page.locator("canvas").screenshot({ path: path.join(output, name) });
 }
@@ -113,12 +123,32 @@ await shot("10-match3-animation.png");
 
 await tap(472, 171);
 assert.equal(JSON.parse(await page.evaluate(() => window.render_game_to_text())).match3.mode, "merge");
+await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  app.startMergeGame();
+  app.merge.board = [
+    [1, 1, null, null],
+    [null, null, null, null],
+    [null, null, null, null],
+    [null, null, null, null]
+  ];
+  app.render();
+});
+let merge = JSON.parse(await page.evaluate(() => window.render_game_to_text())).merge;
+assert.equal(merge.score, 0);
+assert.equal(merge.gameOver, false);
+assert.ok(merge.board.flat().filter((value) => value != null).every((value) => value === 1));
 await shot("11-merge.png");
-await page.mouse.move(110, 330);
-await page.mouse.down();
-await page.mouse.move(285, 330, { steps: 6 });
-await page.mouse.up();
+const beforeOutsideSwipe = JSON.stringify(merge.board);
+await swipe(110, 220, 285, 220);
+assert.equal(
+  JSON.stringify(JSON.parse(await page.evaluate(() => window.render_game_to_text())).merge.board),
+  beforeOutsideSwipe
+);
+await swipe(110, 330, 285, 330);
 await page.waitForTimeout(180);
+merge = JSON.parse(await page.evaluate(() => window.render_game_to_text())).merge;
+assert.ok(merge.score >= 4);
 await shot("12-merge-swipe.png");
 
 assert.deepEqual(errors, []);

@@ -69,6 +69,34 @@ function testLinkedRewardsAndFestival() {
   assert.ok(Math.max(...Object.values(secondGoals)) / Math.max(...Object.values(firstGoals)) < 1.2);
 }
 
+function testMergeScoreRewards() {
+  assert.deepEqual(Core.mergeRewardForScore(0), {
+    minimum: 0,
+    coins: 20,
+    orderSeals: 0,
+    sun: 0,
+    festival: 1
+  });
+  assert.equal(Core.mergeRewardForScore(399).coins, 20);
+  assert.equal(Core.mergeRewardForScore(400).orderSeals, 1);
+  assert.equal(Core.mergeRewardForScore(3000).sun, 1);
+  assert.equal(Core.mergeRewardForScore(15000).orderSeals, 6);
+
+  const state = Core.createDefaultState();
+  const before = {
+    coins: state.coins,
+    seals: state.orderSeals,
+    sun: state.sun,
+    festival: state.festivalProgress.match3
+  };
+  const result = Core.claimMergeScoreReward(state, 3200);
+  assert.equal(result.ok, true);
+  assert.equal(state.coins - before.coins, 180);
+  assert.equal(state.orderSeals - before.seals, 3);
+  assert.equal(state.sun - before.sun, 1);
+  assert.equal(state.festivalProgress.match3 - before.festival, 6);
+}
+
 function testBalancedCropDurations() {
   assert.deepEqual(Core.CROPS.map((crop) => crop.duration / 60_000), [2, 4, 7, 12, 20, 30]);
 }
@@ -159,9 +187,10 @@ function testCropRotationDepth() {
 testFarmLoop();
 testOrderEconomy();
 testLinkedRewardsAndFestival();
+testMergeScoreRewards();
 testBalancedCropDurations();
 testPerPlotAutomationAndSoil();
 testOfflineSaveMigration();
 testPetGardenLoop();
 testCropRotationDepth();
-console.log("core economy, farming, pets, automation, and linked rewards passed");
+console.log("core economy, farming, pets, automation, merge score rewards, and linked rewards passed");

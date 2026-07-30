@@ -36,6 +36,11 @@ final class GameData {
     static final int[] SPRINKLER_COSTS = {180, 240, 320, 420, 540, 680, 850, 1050, 1300, 1600, 1950, 2350};
     static final int[] HARVESTER_COSTS = {320, 440, 580, 740, 920, 1150, 1400, 1700, 2050, 2450, 2900, 3400};
     static final int[][] FESTIVAL_GOALS = {{6, 24}, {7, 27}, {8, 24}, {6, 30}};
+    static final int[] MERGE_SCORE_MINIMUMS = {0, 400, 1200, 3000, 7000, 15000};
+    static final int[] MERGE_COIN_REWARDS = {20, 50, 100, 180, 300, 500};
+    static final int[] MERGE_SEAL_REWARDS = {0, 1, 2, 3, 4, 6};
+    static final int[] MERGE_SUN_REWARDS = {0, 0, 0, 1, 2, 3};
+    static final int[] MERGE_FESTIVAL_REWARDS = {1, 2, 4, 6, 9, 12};
 
     static Crop crop(int index) {
         return CROPS[Math.max(0, Math.min(CROPS.length - 1, index))];
@@ -43,6 +48,20 @@ final class GameData {
 
     static int xpNeeded(int level) {
         return 55 + level * 25;
+    }
+
+    static MergeReward mergeReward(int score) {
+        int tier = 0;
+        for (int i = 1; i < MERGE_SCORE_MINIMUMS.length; i++) {
+            if (score < MERGE_SCORE_MINIMUMS[i]) break;
+            tier = i;
+        }
+        return new MergeReward(
+            MERGE_COIN_REWARDS[tier],
+            MERGE_SEAL_REWARDS[tier],
+            MERGE_SUN_REWARDS[tier],
+            MERGE_FESTIVAL_REWARDS[tier]
+        );
     }
 
     static String duration(long milliseconds) {
@@ -54,6 +73,26 @@ final class GameData {
     }
 
     private GameData() {}
+
+    static final class MergeReward {
+        final int coins;
+        final int orderSeals;
+        final int sun;
+        final int festival;
+
+        MergeReward(int coins, int orderSeals, int sun, int festival) {
+            this.coins = coins;
+            this.orderSeals = orderSeals;
+            this.sun = sun;
+            this.festival = festival;
+        }
+
+        String label() {
+            return "￥" + coins
+                + (orderSeals > 0 ? " · 印章" + orderSeals : "")
+                + (sun > 0 ? " · 阳光" + sun : "");
+        }
+    }
 
     static final class Crop {
         final String id;

@@ -6,11 +6,26 @@ $apk = Join-Path $root "android\app\build\outputs\apk\release\app-release.apk"
 $target = Join-Path $root "release\UU-Harvest-Mobile.apk"
 $keystoreProperties = Join-Path $root "android\keystore.properties"
 
-$jdk17 = Get-ChildItem -Path "$env:LOCALAPPDATA\Java" -Directory -Filter "jdk-17*" -ErrorAction SilentlyContinue |
+$jdkCandidates = @()
+$jdkCandidates += Get-ChildItem -Path "$env:LOCALAPPDATA\Java" -Directory -Filter "jdk-*" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^jdk-(1[7-9]|[2-9]\d)' } |
     Sort-Object Name -Descending |
-    Select-Object -First 1
-if ($jdk17 -and (Test-Path -LiteralPath (Join-Path $jdk17.FullName "bin\java.exe"))) {
-    $env:JAVA_HOME = $jdk17.FullName
+    Select-Object -ExpandProperty FullName
+$jdkCandidates += @(
+    (Join-Path $env:ProgramFiles "Android\Android Studio\jbr"),
+    "D:\Android Studio\jbr",
+    $env:JAVA_HOME
+)
+foreach ($candidate in $jdkCandidates | Where-Object { $_ } | Select-Object -Unique) {
+    $java = Join-Path $candidate "bin\java.exe"
+    if (-not (Test-Path -LiteralPath $java)) {
+        continue
+    }
+    $productVersion = (Get-Item -LiteralPath $java).VersionInfo.ProductVersion
+    if ($productVersion -match '^(\d+)' -and [int]$Matches[1] -ge 17) {
+        $env:JAVA_HOME = $candidate
+        break
+    }
 }
 if (-not $env:ANDROID_HOME -and (Test-Path -LiteralPath "$env:LOCALAPPDATA\Android\Sdk")) {
     $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
@@ -30,7 +45,7 @@ try {
     if (-not (Test-Path -LiteralPath $keystoreProperties)) {
         throw "android\keystore.properties is required for a release-signed APK."
     }
-    & $gradle -p android assembleRelease
+    & $gradle -p android assembleRelease --no-daemon
     if ($LASTEXITCODE -ne 0) {
         throw "Android release build failed."
     }

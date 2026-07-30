@@ -15,6 +15,14 @@
     { link: 8, match3: 24 },
     { link: 6, match3: 30 }
   ];
+  const MERGE_REWARD_TIERS = [
+    { minimum: 0, coins: 20, orderSeals: 0, sun: 0, festival: 1 },
+    { minimum: 400, coins: 50, orderSeals: 1, sun: 0, festival: 2 },
+    { minimum: 1200, coins: 100, orderSeals: 2, sun: 0, festival: 4 },
+    { minimum: 3000, coins: 180, orderSeals: 3, sun: 1, festival: 6 },
+    { minimum: 7000, coins: 300, orderSeals: 4, sun: 2, festival: 9 },
+    { minimum: 15000, coins: 500, orderSeals: 6, sun: 3, festival: 12 }
+  ];
 
   const CROPS = [
     { id: "radish", name: "萝卜", level: 1, duration: 120_000, seedPrice: 5, sellPrice: 9, yield: 1, color: "#f4c8c4" },
@@ -889,6 +897,32 @@
     };
   }
 
+  function mergeRewardForScore(score) {
+    const safeScore = Math.max(0, Math.floor(Number(score) || 0));
+    let tier = MERGE_REWARD_TIERS[0];
+    for (const candidate of MERGE_REWARD_TIERS) {
+      if (safeScore < candidate.minimum) break;
+      tier = candidate;
+    }
+    return { ...tier };
+  }
+
+  function claimMergeScoreReward(state, score) {
+    const reward = mergeRewardForScore(score);
+    state.coins += reward.coins;
+    state.totalEarned += reward.coins;
+    state.orderSeals += reward.orderSeals;
+    state.sun += reward.sun;
+    state.stats.match3Rounds += 1;
+    const festivalResult = advanceFestival(state, "match3", reward.festival);
+    return {
+      ok: true,
+      reward,
+      festival: festivalResult.festival,
+      festivalCompleted: festivalResult.completed
+    };
+  }
+
   function completeMiniGame(state, type) {
     const result = claimMiniMilestone(state, type);
     if (!result.ok) return result;
@@ -923,6 +957,7 @@
     FERTILIZER_COIN_COST,
     PET_FOOD_PRODUCE_COST,
     FESTIVAL_GOAL_PATTERNS,
+    MERGE_REWARD_TIERS,
     cropById,
     xpNeeded,
     addXp,
@@ -967,6 +1002,8 @@
     claimPetIncome,
     claimMiniMilestone,
     advanceFestival,
+    mergeRewardForScore,
+    claimMergeScoreReward,
     completeMiniGame,
     spendSun,
     formatDuration

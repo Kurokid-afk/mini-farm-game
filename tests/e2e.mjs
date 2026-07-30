@@ -393,25 +393,69 @@ assert.equal(matchMilestone.animation, "shuffle");
 await page.evaluate(() => {
   const app = window.__uuHarvest.app;
   app.puzzleMode = "merge";
-  app.merge.board = [
-    [1, 1, null, null],
-    [2, 2, null, null],
-    [null, null, null, null],
-    [null, null, null, null]
-  ];
-  app.merge.animation = null;
-  app.merge.lockedUntil = 0;
+  app.startMergeGame();
   app.render();
 });
+let mergeState = JSON.parse(await page.evaluate(() => window.render_game_to_text())).merge;
+assert.equal(mergeState.board.flat().filter((value) => value != null).length, 2);
+assert.ok(mergeState.board.flat().filter((value) => value != null).every((value) => value === 1 || value === 2));
+assert.equal(mergeState.score, 0);
+assert.equal(mergeState.gameOver, false);
 await screenshot("06f-merge-start.png");
-await page.evaluate(() => window.__uuHarvest.app.moveMerge("left"));
+
+const mergeBefore = await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  app.merge.board = [
+    [1, 2, 3, 4],
+    [2, 3, 4, 5],
+    [3, 4, 5, 6],
+    [5, 6, 7, 7]
+  ];
+  app.merge.score = 3000;
+  app.merge.maxValue = 6;
+  app.merge.gameOver = false;
+  app.merge.rewardClaimed = false;
+  app.merge.reward = null;
+  app.merge.animation = null;
+  app.merge.lockedUntil = 0;
+  app.state.festival = { link: false, match3: false };
+  app.state.festivalProgress = { link: 0, match3: 0 };
+  app.state.festivalGoals = { link: 6, match3: 24 };
+  app.render();
+  return {
+    coins: app.state.coins,
+    seals: app.state.orderSeals,
+    sun: app.state.sun
+  };
+});
+await page.evaluate(() => window.__uuHarvest.app.moveMerge("right"));
 await page.evaluate(() => window.advanceTime(140));
 await screenshot("06g-merge-animation.png");
 await page.evaluate(() => window.advanceTime(220));
 textState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
 assert.equal(textState.match3.mode, "merge");
-assert.ok(textState.merge.merges >= 2);
-assert.ok(textState.merge.rewardMerges >= 3);
+assert.equal(textState.merge.gameOver, true);
+assert.equal(textState.merge.rewardClaimed, true);
+assert.equal(textState.merge.score, 3256);
+assert.equal(textState.merge.reward.coins, 180);
+assert.equal(textState.merge.reward.orderSeals, 3);
+const mergeAfter = await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  return {
+    coins: app.state.coins,
+    seals: app.state.orderSeals,
+    sun: app.state.sun
+  };
+});
+assert.equal(mergeAfter.coins - mergeBefore.coins, 180);
+assert.equal(mergeAfter.seals - mergeBefore.seals, 3);
+assert.equal(mergeAfter.sun - mergeBefore.sun, 1);
+await screenshot("06h-merge-game-over.png");
+await page.evaluate(() => window.__uuHarvest.app.requestMergeRestart());
+mergeState = JSON.parse(await page.evaluate(() => window.render_game_to_text())).merge;
+assert.equal(mergeState.gameOver, false);
+assert.equal(mergeState.score, 0);
+assert.equal(mergeState.board.flat().filter((value) => value != null).length, 2);
 
 await page.evaluate(() => {
   const state = window.__uuHarvest.getState();

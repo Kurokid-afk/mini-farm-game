@@ -86,6 +86,7 @@ final class GameView extends View {
     private static final int A_MATCH_CELL = 30;
     private static final int A_MATCH_SHUFFLE = 31;
     private static final int A_PUZZLE_MODE = 32;
+    private static final int A_MERGE_RESTART = 33;
     private static final int A_PET_SELECT = 40;
     private static final int A_PET_ACTION = 41;
     private static final int A_PET_FOOD = 42;
@@ -121,6 +122,9 @@ final class GameView extends View {
     private boolean mergeMode = false;
     private int[][] mergeBoard = new int[4][4];
     private int mergeScore;
+    private boolean mergeGameOver;
+    private boolean mergeRewardClaimed;
+    private long mergeRestartConfirmUntil;
     private int petAction = -1;
     private long petActionUntil = 0L;
     private long pageEnterStarted = 0L;
@@ -191,14 +195,16 @@ final class GameView extends View {
         }
         mergeMode = session.mergeMode;
         if (session.mergeBoard == null) {
-            addMergeTile();
-            addMergeTile();
+            startMergeGame();
         } else {
             mergeBoard = copyBoard(session.mergeBoard);
             mergeScore = session.mergeScore;
+            mergeGameOver = session.mergeGameOver || !mergeHasMove();
+            mergeRewardClaimed = session.mergeRewardClaimed;
             if (mergeEmptyCount() == 16) {
-                addMergeTile();
-                addMergeTile();
+                startMergeGame();
+            } else if (mergeGameOver && !mergeRewardClaimed) {
+                finishMergeGame(false);
             }
         }
         linkPath = null;
@@ -207,7 +213,7 @@ final class GameView extends View {
 
     private void captureSession() {
         GameState.Session session = state.session;
-        session.version = 1;
+        session.version = 2;
         session.view = view;
         session.marketTab = marketTab;
         session.petPage = petPage;
@@ -224,6 +230,8 @@ final class GameView extends View {
         session.mergeMode = mergeMode;
         session.mergeBoard = copyBoard(mergeBoard);
         session.mergeScore = mergeScore;
+        session.mergeGameOver = mergeGameOver;
+        session.mergeRewardClaimed = mergeRewardClaimed;
     }
 
     void setSystemInsets(int left, int top, int right, int bottom) {
@@ -438,7 +446,7 @@ final class GameView extends View {
             boolean unlocked = i < state.unlockedPlots;
             if (!unlocked) {
                 if (i != state.unlockedPlots) continue;
-                addHit(A_PLOT, i, x, y, 176, plotHeight);
+                addHit(A_UNLOCK_LAND, i, x, y, 176, plotHeight);
                 float signY = y + plotHeight / 2f - 20;
                 round(canvas, x + 20, signY + 3, 136, 40, 7, Color.argb(45, 48, 68, 65), null, 0);
                 round(canvas, x + 20, signY, 136, 40, 7, Color.argb(242, 252, 253, 247), BORDER, 1.3f);
@@ -504,8 +512,10 @@ final class GameView extends View {
         float y = farmToolsY();
         for (int i = 0; i < TOOL_NAMES.length; i++) {
             float x = 18 + i * 121;
-            boolean selected = state.selectedTool == i && automationAssign == 0;
-            button(canvas, TOOL_NAMES[i], A_TOOL, i, x, y, 111, 42, selected ? YELLOW_SOFT : CREAM, false);
+            boolean assigning = i == 4 && automationAssign > 0;
+            boolean selected = assigning || state.selectedTool == i && automationAssign == 0;
+            String label = assigning ? "退出布置" : TOOL_NAMES[i];
+            button(canvas, label, A_TOOL, i, x, y, 111, 42, selected ? YELLOW_SOFT : CREAM, false);
         }
     }
 
@@ -648,10 +658,21 @@ final class GameView extends View {
     }
 
     private void drawPuzzle(Canvas canvas) {
-        title(canvas, mergeMode ? "田园合成" : "清新消消乐", "无限游玩 · 达标即领奖");
+        title(canvas, mergeMode ? "田园合成" : "清新消消乐", mergeMode ? "无路可走时结算" : "无限游玩 · 达标即领奖");
         button(canvas, "消消乐", A_PUZZLE_MODE, 0, 18, 153, 190, 42, !mergeMode ? CORAL_SOFT : CREAM, false);
         button(canvas, "田园合成", A_PUZZLE_MODE, 1, 222, 153, 190, 42, mergeMode ? CORAL_SOFT : CREAM, false);
-        button(canvas, "重排 ☀2", A_MATCH_SHUFFLE, 0, 426, 153, 196, 42, YELLOW_SOFT, state.sun < 2);
+        button(
+            canvas,
+            mergeMode ? (mergeGameOver ? "再来一局" : "重开") : "重排 ☀2",
+            mergeMode ? A_MERGE_RESTART : A_MATCH_SHUFFLE,
+            0,
+            426,
+            153,
+            196,
+            42,
+            mergeMode && !mergeGameOver ? PAPER_2 : YELLOW_SOFT,
+            !mergeMode && state.sun < 2
+        );
         if (mergeMode) drawMerge(canvas); else drawMatch(canvas);
     }
 
@@ -686,8 +707,10 @@ final class GameView extends View {
     private void drawMerge(Canvas canvas) {
         float statusY = 206;
         card(canvas, 18, statusY, 604, 52, PAPER, 2);
+        GameData.MergeReward preview = GameData.mergeReward(mergeScore);
         text(canvas, "得分 " + mergeScore, 34, statusY + 26, 11, INK, Paint.Align.LEFT, true);
-        fittedText(canvas, "印章 " + state.matchRewardPieces + "/" + state.matchTarget, 592, statusY + 26, 10, GREEN_DARK, Paint.Align.RIGHT, true, 220);
+        fittedText(canvas, "最高 " + mergeHighestTile(), 188, statusY + 26, 10, CORAL_DARK, Paint.Align.LEFT, true, 120);
+        fittedText(canvas, "当前结算 " + preview.label(), 592, statusY + 26, 9, GREEN_DARK, Paint.Align.RIGHT, true, 275);
         float size = 137;
         float pitch = 143;
         float boardTop = mergeBoardTop();
@@ -708,6 +731,18 @@ final class GameView extends View {
                     text(canvas, String.valueOf(1 << value), x + size / 2, y + 82, 12, Color.WHITE, Paint.Align.CENTER, true);
                 }
             }
+        }
+        if (mergeGameOver && animationProgress(mergeBounceStarted, 260f) >= 1f) {
+            GameData.MergeReward reward = GameData.mergeReward(mergeScore);
+            float overlayX = 104;
+            float overlayY = boardTop + 164;
+            round(canvas, overlayX + 4, overlayY + 5, 432, 248, 8, Color.argb(48, 48, 68, 65), null, 0);
+            card(canvas, overlayX, overlayY, 432, 248, PAPER, 2);
+            text(canvas, "本局结束", 320, overlayY + 45, 18, INK, Paint.Align.CENTER, true);
+            text(canvas, "最终得分 " + mergeScore, 320, overlayY + 88, 13, CORAL_DARK, Paint.Align.CENTER, true);
+            fittedText(canvas, reward.label(), 320, overlayY + 126, 11, GREEN_DARK, Paint.Align.CENTER, true, 360);
+            text(canvas, "达到 2048 后仍可继续，棋盘无路可走才结束", 320, overlayY + 158, 8, INK_SOFT, Paint.Align.CENTER, false);
+            button(canvas, "再来一局", A_MERGE_RESTART, 0, overlayX + 68, overlayY + 182, 296, 50, YELLOW_SOFT, false);
         }
     }
 
@@ -836,7 +871,10 @@ final class GameView extends View {
         if (event.getActionMasked() != MotionEvent.ACTION_UP) return true;
         float dx = x - downX;
         float dy = y - downY;
-        if (view == 2 && Math.max(Math.abs(dx), Math.abs(dy)) > 34f) {
+        boolean puzzleSwipe = view == 2
+            && Math.max(Math.abs(dx), Math.abs(dy)) > 34f
+            && (!mergeMode || mergeBoardContains(downX, downY));
+        if (puzzleSwipe) {
             int direction = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 3 : 2) : (dy > 0 ? 1 : 0);
             if (mergeMode) {
                 moveMerge(direction);
@@ -851,6 +889,7 @@ final class GameView extends View {
             invalidate();
             return true;
         }
+        if (view == 2 && Math.max(Math.abs(dx), Math.abs(dy)) > 34f) return true;
         performClick();
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit hit = hits.get(i);
@@ -884,7 +923,16 @@ final class GameView extends View {
             result(state.deliverOrder(hit.index), 320, layoutY(183));
         } else if (hit.action == A_PLOT) {
             if (automationAssign > 0) {
+                boolean wasAssigned = automationAssign == 1 ? state.sprinklerPlots[hit.index] : state.harvesterPlots[hit.index];
                 result(state.assignAutomation(automationAssign == 1, hit.index), 320, layoutY(500));
+                boolean isAssigned = automationAssign == 1 ? state.sprinklerPlots[hit.index] : state.harvesterPlots[hit.index];
+                if (!wasAssigned && isAssigned) {
+                    automationAssign = 0;
+                    state.selectedTool = 0;
+                }
+            } else if (state.plots[hit.index].crop >= 0 && state.cropProgress(hit.index, now) >= 1f) {
+                result(state.harvest(hit.index, now, false), 320, layoutY(500));
+                addEffect("harvest", plotCenterX(hit.index), plotCenterY(hit.index), GREEN_SOFT, "收获");
             } else if (state.selectedTool == 0) {
                 result(state.plant(hit.index, now), 320, layoutY(500));
                 addEffect("sprout", plotCenterX(hit.index), plotCenterY(hit.index), GREEN, "播种");
@@ -901,8 +949,20 @@ final class GameView extends View {
                 toast("请在集市的自动化页面选择设备并点“布置”", false);
             }
         } else if (hit.action == A_TOOL) {
-            state.selectedTool = hit.index;
-            automationAssign = 0;
+            if (hit.index == 4 && automationAssign > 0) {
+                automationAssign = 0;
+                state.selectedTool = 0;
+                toast("已退出设备布置", true);
+            } else if (hit.index == 4) {
+                startPageTransition();
+                view = 3;
+                marketTab = 1;
+                automationAssign = 0;
+                toast("购买设备后点“布置”，再选择一块农田", true);
+            } else {
+                state.selectedTool = hit.index;
+                automationAssign = 0;
+            }
         } else if (hit.action == A_SEED) {
             if (GameData.crop(hit.index).level <= state.level) {
                 state.selectedCrop = hit.index;
@@ -930,7 +990,10 @@ final class GameView extends View {
             state.selectedTool = 4;
             toast("请选择要布置的农田格子", true);
         } else if (hit.action == A_UNLOCK_LAND) {
-            result(state.unlockLand(), 500, layoutY(760));
+            int unlocking = state.unlockedPlots;
+            GameState.Result unlock = state.unlockLand();
+            result(unlock, 500, layoutY(760));
+            if (unlock.ok) addEffect("sprout", plotCenterX(unlocking), plotCenterY(unlocking), GREEN, "扩建");
         } else if (hit.action == A_EXCHANGE) {
             result(state.exchangeTicket(), 500, layoutY(660));
         } else if (hit.action == A_RESEARCH) {
@@ -946,9 +1009,11 @@ final class GameView extends View {
         } else if (hit.action == A_MATCH_SHUFFLE) {
             if (state.sun >= 2) {
                 state.sun -= 2;
-                if (mergeMode) shuffleMerge(); else startMatchBoard();
+                startMatchBoard();
                 toast("棋盘已重排", true);
             }
+        } else if (hit.action == A_MERGE_RESTART) {
+            requestMergeRestart();
         } else if (hit.action == A_PUZZLE_MODE) {
             if (mergeMode != (hit.index == 1)) startPageTransition();
             mergeMode = hit.index == 1;
@@ -1278,47 +1343,23 @@ final class GameView extends View {
     }
 
     private void moveMerge(int direction) {
-        int[][] before = copyBoard(mergeBoard);
-        int merges = 0;
-        int gained = 0;
-        for (int line = 0; line < 4; line++) {
-            int[] values = new int[4];
-            for (int pos = 0; pos < 4; pos++) {
-                int r = direction == 0 ? pos : direction == 1 ? 3 - pos : line;
-                int c = direction == 2 ? pos : direction == 3 ? 3 - pos : line;
-                values[pos] = mergeBoard[r][c];
-            }
-            int[] compact = new int[4];
-            int write = 0;
-            for (int value : values) {
-                if (value == 0) continue;
-                if (write > 0 && compact[write - 1] == value) {
-                    compact[write - 1]++;
-                    gained += 1 << compact[write - 1];
-                    merges++;
-                } else compact[write++] = value;
-            }
-            for (int pos = 0; pos < 4; pos++) {
-                int r = direction == 0 ? pos : direction == 1 ? 3 - pos : line;
-                int c = direction == 2 ? pos : direction == 3 ? 3 - pos : line;
-                mergeBoard[r][c] = compact[pos];
-            }
+        if (mergeGameOver) {
+            toast("本局已经结束，请点“再来一局”", false);
+            return;
         }
-        if (boardsEqual(before, mergeBoard)) {
+        MergeLogic.Result move = MergeLogic.move(mergeBoard, direction);
+        if (!move.changed) {
             toast("这个方向没有可移动的方块", false);
             return;
         }
-        mergeScore += gained;
-        if (merges > 0) {
-            state.awardMatchPieces(merges * 3);
-            addEffect("pop", 320, layoutY(500), YELLOW, "合成 +" + gained);
+        mergeBoard = move.board;
+        mergeScore += move.gained;
+        if (move.merges > 0) {
+            addEffect("pop", 320, layoutY(500), YELLOW, "合成 +" + move.gained);
         }
         addMergeTile();
         mergeBounceStarted = SystemClock.uptimeMillis();
-        if (!mergeHasMove()) {
-            shuffleMerge();
-            toast("棋盘已满，自动整理后继续", true);
-        }
+        if (!mergeHasMove()) finishMergeGame(true);
     }
 
     private void addMergeTile() {
@@ -1329,30 +1370,47 @@ final class GameView extends View {
         mergeBoard[cell.y][cell.x] = random.nextFloat() < 0.82f ? 1 : 2;
     }
 
-    private void shuffleMerge() {
-        List<Integer> values = new ArrayList<>();
-        for (int[] row : mergeBoard) for (int value : row) if (value > 0) values.add(value);
-        Collections.shuffle(values, random);
+    private void startMergeGame() {
         for (int[] row : mergeBoard) Arrays.fill(row, 0);
-        int index = 0;
-        for (int r = 0; r < 4 && index < values.size(); r++) {
-            for (int c = 0; c < 4 && index < values.size(); c++) mergeBoard[r][c] = values.get(index++);
+        mergeScore = 0;
+        mergeGameOver = false;
+        mergeRewardClaimed = false;
+        mergeRestartConfirmUntil = 0L;
+        addMergeTile();
+        addMergeTile();
+        mergeBounceStarted = SystemClock.uptimeMillis();
+    }
+
+    private void requestMergeRestart() {
+        long now = SystemClock.uptimeMillis();
+        if (mergeGameOver || mergeScore == 0) {
+            startMergeGame();
+            toast("新一局开始，只会出现基础方块", true);
+            return;
         }
-        if (!mergeHasMove()) {
-            mergeBoard[0][0] = 1;
-            mergeBoard[0][1] = 1;
+        if (now <= mergeRestartConfirmUntil) {
+            startMergeGame();
+            toast("已放弃上一局，重新开始", true);
+            return;
         }
+        mergeRestartConfirmUntil = now + 2500L;
+        toast("再点一次“重开”确认放弃，本局不会结算奖励", false);
+    }
+
+    private void finishMergeGame(boolean showMessage) {
+        mergeGameOver = true;
+        if (mergeRewardClaimed) return;
+        GameState.Result reward = state.awardMergeScore(mergeScore);
+        mergeRewardClaimed = true;
+        if (showMessage) result(reward, 320, layoutY(500));
+    }
+
+    private int mergeHighestTile() {
+        return MergeLogic.highestTile(mergeBoard);
     }
 
     private boolean mergeHasMove() {
-        for (int r = 0; r < 4; r++) {
-            for (int c = 0; c < 4; c++) {
-                if (mergeBoard[r][c] == 0) return true;
-                if (r < 3 && mergeBoard[r][c] == mergeBoard[r + 1][c]) return true;
-                if (c < 3 && mergeBoard[r][c] == mergeBoard[r][c + 1]) return true;
-            }
-        }
-        return false;
+        return MergeLogic.hasMove(mergeBoard);
     }
 
     private void drawEffects(Canvas canvas) {
@@ -1963,6 +2021,11 @@ final class GameView extends View {
     private float mergeBoardTop() {
         float boardHeight = 566f;
         return 258f + Math.max(22f, (navTop() - 258f - boardHeight) / 2f);
+    }
+
+    private boolean mergeBoardContains(float x, float y) {
+        float top = mergeBoardTop();
+        return x >= 37f && x <= 609f && y >= top && y <= top + 572f;
     }
 
     private float petShopY() {

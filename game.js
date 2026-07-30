@@ -210,8 +210,9 @@ class HarvestCollection {
       }
       const dx = pointer.x - this.touchStart.x;
       const dy = pointer.y - this.touchStart.y;
+      const startedOnBoard = this.mergeBoardContains(this.touchStart.x, this.touchStart.y);
       this.touchStart = null;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) < 36) return;
+      if (!startedOnBoard || Math.max(Math.abs(dx), Math.abs(dy)) < 36) return;
       this.moveMerge(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up"));
     });
     scene.input.mouse?.disableContextMenu();
@@ -265,7 +266,7 @@ class HarvestCollection {
 
   createSessionSnapshot() {
     const snapshot = {
-      version: 1,
+      version: 2,
       puzzleMode: this.puzzleMode,
       marketTab: this.marketTab,
       mobileMarketPage: this.mobileMarketPage,
@@ -310,19 +311,20 @@ class HarvestCollection {
     }
     if (this.merge) {
       snapshot.merge = {
+        ruleVersion: 2,
         board: cloneBoard(this.merge.board),
         score: this.merge.score,
         maxValue: this.merge.maxValue,
         merges: this.merge.merges,
-        rewardMerges: this.merge.rewardMerges,
-        rewards: this.merge.rewards
+        gameOver: this.merge.gameOver,
+        rewardClaimed: this.merge.rewardClaimed
       };
     }
     return snapshot;
   }
 
   restoreSession(snapshot) {
-    if (!snapshot || snapshot.version !== 1) return;
+    if (!snapshot || ![1, 2].includes(snapshot.version)) return;
     this.puzzleMode = snapshot.puzzleMode === "merge" ? "merge" : "match3";
     this.marketTab = ["growth", "automation", "research"].includes(snapshot.marketTab) ? snapshot.marketTab : "growth";
     this.mobileMarketPage = wholeNumber(snapshot.mobileMarketPage, 0, 10);
@@ -330,7 +332,8 @@ class HarvestCollection {
     this.mobilePetPage = wholeNumber(snapshot.mobilePetPage, 0, 10);
     this.link = this.restoreLinkSession(snapshot.link);
     this.match3 = this.restoreMatchSession(snapshot.match3);
-    this.merge = this.restoreMergeSession(snapshot.merge);
+    this.merge = snapshot.version >= 2 ? this.restoreMergeSession(snapshot.merge) : null;
+    if (this.merge?.gameOver && !this.merge.rewardClaimed) this.finishMergeGame(false);
   }
 
   restoreLinkSession(saved) {
@@ -399,18 +402,26 @@ class HarvestCollection {
   }
 
   restoreMergeSession(saved) {
-    if (!saved || !validBoard(saved.board, 4, 4, (value) => value == null || (Number.isInteger(value) && value >= 1 && value <= 30))) {
+    if (
+      !saved
+      || saved.ruleVersion !== 2
+      || !validBoard(saved.board, 4, 4, (value) => value == null || (Number.isInteger(value) && value >= 1 && value <= 30))
+    ) {
       return null;
     }
     const board = cloneBoard(saved.board);
     if (board.flat().every((value) => value == null)) return null;
+    const score = wholeNumber(saved.score);
+    const gameOver = Boolean(saved.gameOver) || !this.hasMergeMove(board);
     return {
       board,
-      score: wholeNumber(saved.score),
+      score,
       maxValue: Math.max(1, wholeNumber(saved.maxValue, 1, 30)),
       merges: wholeNumber(saved.merges),
-      rewardMerges: wholeNumber(saved.rewardMerges, 0, 7),
-      rewards: wholeNumber(saved.rewards),
+      gameOver,
+      rewardClaimed: Boolean(saved.rewardClaimed),
+      reward: gameOver ? Core.mergeRewardForScore(score) : null,
+      restartConfirmUntil: 0,
       animation: null,
       lockedUntil: 0
     };
@@ -4357,13 +4368,16 @@ class HarvestCollection {
       score: 0,
       maxValue: 1,
       merges: 0,
-      rewardMerges: 0,
-      rewards: 0,
+      gameOver: false,
+      rewardClaimed: false,
+      reward: null,
+      restartConfirmUntil: 0,
       animation: null,
       lockedUntil: 0
     };
     this.spawnMergeTile();
     this.spawnMergeTile();
+    this.save(true);
   }
 
   mergeLineCoordinates(direction, line) {
@@ -4384,26 +4398,52 @@ class HarvestCollection {
     return false;
   }
 
-  rescueMergeBoard() {
-    const cells = [];
-    for (let row = 0; row < 4; row += 1) {
-      for (let col = 0; col < 4; col += 1) {
-        if (this.merge.board[row][col] != null) {
-          cells.push({ row, col, value: this.merge.board[row][col] });
-        }
-      }
+  mergeBoardContains(x, y) {
+    const bounds = MOBILE_LAYOUT
+      ? { x: 68, y: 266, size: 504 }
+      : { x: 84, y: 235, size: 352 };
+    return x >= bounds.x && x <= bounds.x + bounds.size && y >= bounds.y && y <= bounds.y + bounds.size;
+  }
+
+  finishMergeGame(showMessage = true) {
+    if (!this.merge || this.merge.rewardClaimed) return this.merge?.reward || null;
+    this.merge.gameOver = true;
+    const result = Core.claimMergeScoreReward(this.state, this.merge.score);
+    this.merge.rewardClaimed = true;
+    this.merge.reward = result.reward;
+    if (showMessage) {
+      const reward = result.reward;
+      this.showToast(
+        `本局结束：金币 +${reward.coins}${reward.orderSeals ? `、印章 +${reward.orderSeals}` : ""}${reward.sun ? `、阳光 +${reward.sun}` : ""}`,
+        "good",
+        2800
+      );
     }
-    cells.sort((a, b) => a.value - b.value);
-    cells.slice(0, 4).forEach((cell) => {
-      this.merge.board[cell.row][cell.col] = null;
-    });
-    this.spawnMergeTile();
-    this.spawnMergeTile();
-    this.showToast("菜篮已自动腾出低级格子，可以继续合成", "normal", 1800);
+    this.save(true);
+    return result.reward;
+  }
+
+  requestMergeRestart() {
+    if (!this.merge || this.merge.gameOver || this.merge.score === 0) {
+      this.startMergeGame();
+      this.showToast("新一局开始，只会出现基础方块", "good", 1400);
+      return;
+    }
+    if (this.now() <= this.merge.restartConfirmUntil) {
+      this.startMergeGame();
+      this.showToast("已放弃上一局，重新开始", "normal", 1400);
+      return;
+    }
+    this.merge.restartConfirmUntil = this.now() + 2500;
+    this.showToast("再点一次“重开”确认放弃，本局不会结算奖励", "normal", 2400);
   }
 
   moveMerge(direction) {
     if (!this.merge || this.now() < this.merge.lockedUntil) return;
+    if (this.merge.gameOver) {
+      this.showToast("本局已经结束，点击“再来一局”", "normal", 1400);
+      return;
+    }
     const before = this.merge.board.map((row) => [...row]);
     const after = Array.from({ length: 4 }, () => Array(4).fill(null));
     const movements = [];
@@ -4445,7 +4485,6 @@ class HarvestCollection {
     this.merge.board = after;
     this.merge.score += gained;
     this.merge.merges += mergeEvents.length;
-    this.merge.rewardMerges += mergeEvents.length + (mergeEvents.length >= 2 ? 1 : 0);
     this.merge.maxValue = Math.max(
       this.merge.maxValue,
       ...after.flat().filter((value) => value != null)
@@ -4463,18 +4502,7 @@ class HarvestCollection {
     };
     this.merge.lockedUntil = startedAt + 300;
 
-    while (this.merge.rewardMerges >= 8) {
-      const result = Core.claimMiniMilestone(this.state, "match3");
-      this.merge.rewardMerges -= 8;
-      this.merge.rewards += result.reward.amount;
-      this.showToast(
-        `合成里程碑：订单印章 +${result.reward.amount}${this.miniGiftLabel(result.bonus)}`,
-        "good",
-        result.bonus ? 2600 : 1800
-      );
-    }
-    if (mergeEvents.length) this.advanceFestival("match3", mergeEvents.length * 3);
-    if (!this.hasMergeMove()) this.rescueMergeBoard();
+    if (!this.hasMergeMove()) this.finishMergeGame();
     this.save(true);
     this.render();
   }
@@ -4554,6 +4582,38 @@ class HarvestCollection {
     }
   }
 
+  drawMergeGameOver(startX, startY, cell, mobile = false) {
+    if (!this.merge.gameOver || this.now() < this.merge.lockedUntil) return;
+    const reward = this.merge.reward || Core.mergeRewardForScore(this.merge.score);
+    const x = mobile ? startX + 42 : startX + 42;
+    const y = mobile ? startY + 132 : startY + 84;
+    const width = mobile ? cell * 4 - 84 : cell * 4 - 84;
+    const height = mobile ? 240 : 184;
+    this.rounded(x + 4, y + 5, width, height, 8, "rgba(48,68,65,0.2)");
+    this.rounded(x, y, width, height, 8, C.paper, C.ink, 2);
+    this.text("本局结束", x + width / 2, y + (mobile ? 42 : 32), mobile ? 18 : 15, C.ink, "center", 900);
+    this.text(`最终得分 ${this.merge.score}`, x + width / 2, y + (mobile ? 82 : 66), mobile ? 13 : 11, C.coralDark, "center", 900);
+    this.text(
+      `金币 +${reward.coins}${reward.orderSeals ? ` · 印章 +${reward.orderSeals}` : ""}${reward.sun ? ` · 阳光 +${reward.sun}` : ""}`,
+      x + width / 2,
+      y + (mobile ? 117 : 94),
+      mobile ? 11 : 9,
+      C.greenDark,
+      "center",
+      800
+    );
+    this.button(
+      "再来一局",
+      x + (mobile ? 55 : 48),
+      y + (mobile ? 153 : 118),
+      width - (mobile ? 110 : 96),
+      mobile ? 54 : 42,
+      "merge-restart",
+      {},
+      { fill: C.yellowSoft, size: mobile ? 13 : 11 }
+    );
+  }
+
   drawMergeGame() {
     if (!this.merge) this.startMergeGame();
     this.text("田园合成", 22, 151, 18, C.ink, "left", 900);
@@ -4561,8 +4621,8 @@ class HarvestCollection {
     this.rounded(20, 169, 920, 43, 6, C.paper, C.ink, 2);
     this.text(`得分 ${this.merge.score}`, 42, 191, 13, C.ink, "left", 900);
     this.text(`最高 ${2 ** this.merge.maxValue}`, 178, 191, 12, C.coralDark, "left", 800);
-    this.text(`印章 ${this.merge.rewardMerges}/8 次`, 306, 191, 11, C.greenDark, "left", 800);
-    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 470, 191, 11, C.ink, "left", 800);
+    const preview = Core.mergeRewardForScore(this.merge.score);
+    this.text(`当前结算 ￥${preview.coins} · 印章 ${preview.orderSeals}`, 306, 191, 11, C.greenDark, "left", 800);
 
     const panelY = 223;
     const panelHeight = 378;
@@ -4571,6 +4631,7 @@ class HarvestCollection {
     const cell = 88;
     this.rounded(20, panelY, 480, panelHeight, 7, C.cream, C.border, 1.5);
     this.drawMergeBoard(startX, startY, cell);
+    this.drawMergeGameOver(startX, startY, cell);
 
     this.rounded(514, panelY, 426, 108, 7, C.cream, C.border, 1.25);
     this.text("成长图谱", 534, 245, 13, C.ink, "left", 900);
@@ -4586,18 +4647,28 @@ class HarvestCollection {
     this.button("↓", 736, 394, 52, 38, "merge-move", { direction: "down" }, { fill: C.greenSoft, size: 18 });
     this.button("→", 794, 394, 52, 38, "merge-move", { direction: "right" }, { fill: C.paper, size: 18 });
     this.rounded(514, 460, 426, 141, 7, C.cream, C.border, 1.25);
-    this.text("循环奖励", 534, 483, 12, C.ink, "left", 900);
-    this.text(`再合成 ${8 - this.merge.rewardMerges} 次：订单印章`, 534, 512, 11, C.greenDark, "left", 800);
+    this.text("本局结算", 534, 483, 12, C.ink, "left", 900);
+    this.text(`当前档：金币 ${preview.coins} · 印章 ${preview.orderSeals}`, 534, 512, 10, C.greenDark, "left", 800);
     this.text(
-      `庆典益智：${this.state.festival.match3 ? "本轮已完成" : `${this.state.festivalProgress.match3}/${this.state.festivalGoals.match3} 格`}`,
+      `阳光 ${preview.sun} · 庆典进度 +${preview.festival}`,
       534,
-      540,
-      11,
+      537,
+      9,
       C.coralDark,
       "left",
       800
     );
-    this.text(`本次已领取印章 ${this.merge.rewards}`, 534, 568, 9, C.inkSoft, "left", 700);
+    this.text("无路可走时失败结算，2048 后仍可继续", 534, 568, 8, C.inkSoft, "left", 700);
+    this.button(
+      this.merge.gameOver ? "再来一局" : "重开",
+      808,
+      548,
+      112,
+      36,
+      "merge-restart",
+      {},
+      { fill: this.merge.gameOver ? C.yellowSoft : C.paper2, size: 10 }
+    );
   }
 
   drawPuzzleTabs() {
@@ -4723,16 +4794,27 @@ class HarvestCollection {
     this.drawMobileTitle("益智屋", "滑动或点击方向，持续合成");
     this.drawMobilePuzzleTabs();
     this.rounded(18, 200, 604, 52, 6, C.paper, C.ink, 2);
+    const preview = Core.mergeRewardForScore(this.merge.score);
     this.text(`得分 ${this.merge.score}`, 34, 226, 11, C.ink, "left", 900);
-    this.text(`最高 ${2 ** this.merge.maxValue}`, 174, 226, 10, C.coralDark, "left", 800);
-    this.text(`印章 ${this.merge.rewardMerges}/8 次`, 318, 226, 10, C.greenDark, "left", 800);
-    this.text(`礼袋 ${this.state.miniGiftProgress}/3`, 500, 226, 10, C.ink, "left", 800);
+    this.text(`最高 ${2 ** this.merge.maxValue}`, 154, 226, 10, C.coralDark, "left", 800);
+    this.text(`结算 ￥${preview.coins} · 印章 ${preview.orderSeals}`, 276, 226, 9, C.greenDark, "left", 800);
+    this.button(
+      this.merge.gameOver ? "再来一局" : "重开",
+      518,
+      208,
+      92,
+      36,
+      "merge-restart",
+      {},
+      { fill: this.merge.gameOver ? C.yellowSoft : C.paper2, size: 9 }
+    );
 
     const startX = 68;
     const startY = 266;
     const cell = 126;
     this.rounded(startX - 12, startY - 12, cell * 4 + 24, cell * 4 + 24, 7, C.paper2, C.ink, 3);
     this.drawMergeBoard(startX, startY, cell);
+    this.drawMergeGameOver(startX, startY, cell, true);
 
     const controls = [
       ["←", "left", C.paper],
@@ -4744,16 +4826,7 @@ class HarvestCollection {
       this.button(label, 18 + index * 152, 786, 142, 44, "merge-move", { direction }, { fill, size: 20 });
     });
     this.rounded(18, 839, 604, 39, 6, C.cream, C.ink, 2);
-    this.text(
-      `庆典益智 ${this.state.festival.match3 ? "本轮已完成" : `${this.state.festivalProgress.match3}/${this.state.festivalGoals.match3} 格`}`,
-      34,
-      859,
-      10,
-      C.greenDark,
-      "left",
-      900
-    );
-    this.text("每合成 8 次获得订单印章", 606, 859, 9, C.inkSoft, "right", 700);
+    this.text("无路可走时失败结算，达到 2048 后仍可继续", 320, 859, 9, C.greenDark, "center", 800);
   }
 
   async togglePin() {
@@ -4949,6 +5022,7 @@ class HarvestCollection {
         this.toast = null;
       }
       else if (hit.type === "merge-move") this.moveMerge(hit.direction);
+      else if (hit.type === "merge-restart") this.requestMergeRestart();
       else if (hit.type === "match-cell") this.clickMatchCell(hit.row, hit.col);
       else if (hit.type === "match-shuffle") this.shuffleMatch3();
       this.save(true);
@@ -5033,8 +5107,9 @@ class HarvestCollection {
           score: this.merge.score,
           maxValue: this.merge.maxValue,
           merges: this.merge.merges,
-          rewardMerges: this.merge.rewardMerges,
-          rewards: this.merge.rewards,
+          gameOver: this.merge.gameOver,
+          rewardClaimed: this.merge.rewardClaimed,
+          reward: this.merge.reward || Core.mergeRewardForScore(this.merge.score),
           animating: this.now() < this.merge.lockedUntil
         };
       }
