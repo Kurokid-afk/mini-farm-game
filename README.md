@@ -90,4 +90,4 @@ powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify-android-apk.ps1
 ```
 
-Windows 完整游戏输出到 `release/UU田园合集.exe`，老用户更新器输出到 `release/UU-Farm-Updater.exe`，Android 安装包输出到 `release/UU-Harvest-Mobile.apk`。APK 验证脚本默认执行覆盖安装，保留设备现有进度，再检查冷启动、主要页面切换、种植、重启存档和崩溃日志；只有显式传入 `-CleanInstall` 才会卸载旧版。
+Windows 完整游戏输出到 `release/UU-Farm-Windows.exe`，老用户更新器输出到 `release/UU-Farm-Updater.exe`，Android 安装包输出到 `release/UU-Harvest-Mobile.apk`。APK 验证脚本默认执行覆盖安装，保留设备现有进度，再检查冷启动、主要页面切换、种植、重启存档和崩溃日志；只有显式传入 `-CleanInstall` 才会卸载旧版。
