@@ -71,7 +71,7 @@ assert.equal(migratedMerge.score, 0);
 assert.equal(migratedMerge.board.flat().filter((value) => value != null).length, 2);
 assert.ok(migratedMerge.board.flat().filter((value) => value != null).every((value) => value === 1 || value === 2));
 
-await page.evaluate(() => {
+const sessionSetup = await page.evaluate(() => {
   const game = window.__uuHarvest.app;
   game.switchView("match3");
   game.puzzleMode = "merge";
@@ -87,6 +87,7 @@ await page.evaluate(() => {
   game.merge.maxValue = 6;
   game.merge.gameOver = false;
   game.merge.rewardClaimed = false;
+  const removedLinkValue = game.link.board[0][0];
   game.link.board[0][0] = null;
   game.link.score = 2340;
   game.match3.score = 4560;
@@ -99,11 +100,13 @@ await page.evaluate(() => {
     rotationBonus: false
   };
   game.save(true);
+  return { removedLinkValue };
 });
 const persistedSession = await page.evaluate(() => JSON.parse(localStorage.getItem("uu-harvest-collection-v1")).session);
 assert.equal(persistedSession.version, 2);
 assert.equal(persistedSession.merge.ruleVersion, 2);
 assert.equal(persistedSession.merge.board[0][0], 6);
+assert.equal(persistedSession.link.board.flat().filter((value) => value != null).length, 39);
 await page.reload();
 await page.waitForFunction(() => Boolean(window.__uuHarvest));
 const restored = await page.evaluate(() => {
@@ -117,6 +120,8 @@ const restored = await page.evaluate(() => {
     mergeBoard: game.merge?.board,
     mergeScore: game.merge?.score,
     linkCell: game.link?.board[0][0],
+    linkRemaining: game.link?.board.flat().filter((value) => value != null).length,
+    linkCounts: Array.from({ length: 10 }, (_, value) => game.link?.board.flat().filter((cell) => cell === value).length),
     linkScore: game.link?.score,
     matchScore: game.match3?.score,
     plot: game.state.plots[0]
@@ -129,7 +134,9 @@ assert.equal(restored.view, "match3");
 assert.equal(restored.puzzleMode, "merge");
 assert.equal(restored.mergeBoard[0][0], 6);
 assert.equal(restored.mergeScore, 2048);
-assert.equal(restored.linkCell, null);
+assert.equal(restored.linkCell, sessionSetup.removedLinkValue);
+assert.equal(restored.linkRemaining, 40);
+assert.ok(restored.linkCounts.every((count) => count % 2 === 0));
 assert.equal(restored.linkScore, 2340);
 assert.equal(restored.matchScore, 4560);
 assert.equal(restored.plot.crop.cropId, "radish");

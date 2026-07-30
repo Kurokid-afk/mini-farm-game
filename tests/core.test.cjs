@@ -97,6 +97,36 @@ function testMergeScoreRewards() {
   assert.equal(state.festivalProgress.match3 - before.festival, 6);
 }
 
+function testLinkOrphanRepair() {
+  const single = Array.from({ length: 5 }, () => Array(8).fill(null));
+  single[2][3] = 4;
+  const repairedSingle = Core.repairPairedBoard(single, 10);
+  assert.equal(repairedSingle.repaired, true);
+  assert.equal(repairedSingle.added, 1);
+  assert.equal(repairedSingle.removed, 0);
+  assert.equal(repairedSingle.remaining, 2);
+  assert.equal(repairedSingle.board.flat().filter((value) => value === 4).length, 2);
+
+  const full = Array.from({ length: 5 }, () => Array(8).fill(1));
+  full[0][0] = 0;
+  const repairedFull = Core.repairPairedBoard(full, 10);
+  assert.equal(repairedFull.repaired, true);
+  assert.equal(repairedFull.added, 0);
+  assert.equal(repairedFull.removed, 2);
+  assert.equal(repairedFull.remaining, 38);
+  for (let value = 0; value < 10; value += 1) {
+    const count = repairedFull.board.flat().filter((cell) => cell === value).length;
+    assert.equal(count % 2, 0);
+  }
+
+  const valid = Array.from({ length: 5 }, () => Array(8).fill(null));
+  valid[0][0] = 2;
+  valid[0][1] = 2;
+  const untouched = Core.repairPairedBoard(valid, 10);
+  assert.equal(untouched.repaired, false);
+  assert.deepEqual(untouched.board, valid);
+}
+
 function testBalancedCropDurations() {
   assert.deepEqual(Core.CROPS.map((crop) => crop.duration / 60_000), [2, 4, 7, 12, 20, 30]);
 }
@@ -188,6 +218,7 @@ testFarmLoop();
 testOrderEconomy();
 testLinkedRewardsAndFestival();
 testMergeScoreRewards();
+testLinkOrphanRepair();
 testBalancedCropDurations();
 testPerPlotAutomationAndSoil();
 testOfflineSaveMigration();

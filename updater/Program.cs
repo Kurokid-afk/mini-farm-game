@@ -13,8 +13,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("UU小园 Windows 桌面版安全更新器")]
 [assembly: AssemblyCompany("Kurokid-afk")]
 [assembly: AssemblyProduct("UU小园更新器")]
-[assembly: AssemblyVersion("2.5.3.0")]
-[assembly: AssemblyFileVersion("2.5.3.0")]
+[assembly: AssemblyVersion("2.5.4.0")]
+[assembly: AssemblyFileVersion("2.5.4.0")]
 
 namespace UUFarmUpdater
 {
@@ -259,7 +259,7 @@ namespace UUFarmUpdater
 
     internal static class UpdaterEngine
     {
-        internal const string PayloadVersion = "2.5.3";
+        internal const string PayloadVersion = "2.5.4";
         private const string PayloadResource = "UUFarmPayload";
         private const string HashResource = "UUFarmPayloadHash";
         private static readonly string[] KnownPrefixes = { "UU田园合集", "UU小园", "UU种菜", "UU Farm", "mini-farm-game" };

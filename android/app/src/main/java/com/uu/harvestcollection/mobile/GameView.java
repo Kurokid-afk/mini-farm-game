@@ -162,6 +162,7 @@ final class GameView extends View {
     }
 
     void saveNow() {
+        ensureLinkIntegrity(false);
         captureSession();
         state.save(appContext);
         lastSaveAt = SystemClock.uptimeMillis();
@@ -179,10 +180,16 @@ final class GameView extends View {
             linkScore = session.linkScore;
             linkBoards = session.linkBoards;
             linkFlow = session.linkFlow;
-            if (inside(session.linkSelectedRow, session.linkSelectedColumn, 8, 6)
+            LinkLogic.RepairResult repair = LinkLogic.repairPairs(linkBoard, LINK_NAMES.length);
+            linkBoard = repair.board;
+            if (repair.remaining == 0) {
+                startLinkBoard();
+            } else if (!repair.repaired
+                && inside(session.linkSelectedRow, session.linkSelectedColumn, 8, 6)
                 && linkBoard[session.linkSelectedRow][session.linkSelectedColumn] >= 0) {
                 linkSelected = new Point(session.linkSelectedColumn, session.linkSelectedRow);
             }
+            if (findAnyLinkPair() == null) shuffleLink(false);
         }
         if (session.matchBoard == null) {
             startMatchBoard();
@@ -1055,6 +1062,18 @@ final class GameView extends View {
         for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) linkBoard[r][c] = tiles.get(r * 6 + c);
         linkSelected = null;
         if (findAnyLinkPair() == null) shuffleLink(false);
+    }
+
+    private boolean ensureLinkIntegrity(boolean notify) {
+        LinkLogic.RepairResult repair = LinkLogic.repairPairs(linkBoard, LINK_NAMES.length);
+        if (!repair.repaired) return false;
+        linkBoard = repair.board;
+        linkSelected = null;
+        linkPath = null;
+        if (repair.remaining == 0) startLinkBoard();
+        else if (findAnyLinkPair() == null) shuffleLink(false);
+        if (notify) toast("检测到孤张，残局已自动补成一对", true);
+        return true;
     }
 
     private void clickLink(int row, int col) {

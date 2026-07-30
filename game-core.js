@@ -907,6 +907,59 @@
     return { ...tier };
   }
 
+  function repairPairedBoard(source, symbolCount = 10) {
+    const board = source.map((row) => [...row]);
+    const counts = Array(symbolCount).fill(0);
+    const occurrences = Array.from({ length: symbolCount }, () => []);
+    const empty = [];
+
+    for (let row = 0; row < board.length; row += 1) {
+      for (let col = 0; col < board[row].length; col += 1) {
+        const value = board[row][col];
+        if (value == null) {
+          empty.push({ row, col });
+        } else if (Number.isInteger(value) && value >= 0 && value < symbolCount) {
+          counts[value] += 1;
+          occurrences[value].push({ row, col });
+        }
+      }
+    }
+
+    let added = 0;
+    let removed = 0;
+    for (let value = 0; value < symbolCount; value += 1) {
+      if (counts[value] % 2 === 0) continue;
+      if (empty.length) {
+        const anchor = occurrences[value][0];
+        let nearestIndex = 0;
+        let nearestDistance = Number.MAX_SAFE_INTEGER;
+        empty.forEach((cell, index) => {
+          const distance = Math.abs(cell.row - anchor.row) + Math.abs(cell.col - anchor.col);
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = index;
+          }
+        });
+        const cell = empty.splice(nearestIndex, 1)[0];
+        board[cell.row][cell.col] = value;
+        added += 1;
+      } else {
+        const cells = occurrences[value];
+        const cell = cells[cells.length - 1];
+        board[cell.row][cell.col] = null;
+        removed += 1;
+      }
+    }
+
+    return {
+      board,
+      repaired: added > 0 || removed > 0,
+      added,
+      removed,
+      remaining: board.flat().filter((value) => value != null).length
+    };
+  }
+
   function claimMergeScoreReward(state, score) {
     const reward = mergeRewardForScore(score);
     state.coins += reward.coins;
@@ -1003,6 +1056,7 @@
     claimMiniMilestone,
     advanceFestival,
     mergeRewardForScore,
+    repairPairedBoard,
     claimMergeScoreReward,
     completeMiniGame,
     spendSun,

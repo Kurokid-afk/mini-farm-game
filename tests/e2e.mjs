@@ -258,6 +258,25 @@ await screenshot("04b-link-clear-animation.png");
 await page.evaluate(() => window.advanceTime(180));
 await screenshot("04c-link-particles-animation.png");
 await page.evaluate(() => window.advanceTime(260));
+const repairedOrphan = await page.evaluate(() => {
+  const app = window.__uuHarvest.app;
+  app.link.board = Array.from({ length: app.link.rows }, () => Array(app.link.cols).fill(null));
+  app.link.board[2][3] = 4;
+  app.link.selected = { row: 2, col: 3 };
+  const repaired = app.ensureLinkIntegrity(true);
+  app.render();
+  return {
+    repaired,
+    remaining: app.link.board.flat().filter((value) => value != null).length,
+    matching: app.link.board.flat().filter((value) => value === 4).length,
+    selected: app.link.selected
+  };
+});
+assert.equal(repairedOrphan.repaired, true);
+assert.equal(repairedOrphan.remaining, 2);
+assert.equal(repairedOrphan.matching, 2);
+assert.equal(repairedOrphan.selected, null);
+await screenshot("04c2-link-orphan-repaired.png");
 await page.evaluate(() => {
   const app = window.__uuHarvest.app;
   app.link.board = Array.from({ length: app.link.rows }, () => Array(app.link.cols).fill(null));

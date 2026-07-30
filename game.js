@@ -331,6 +331,10 @@ class HarvestCollection {
     this.petShopTab = ["pets", "facilities", "decor"].includes(snapshot.petShopTab) ? snapshot.petShopTab : "pets";
     this.mobilePetPage = wholeNumber(snapshot.mobilePetPage, 0, 10);
     this.link = this.restoreLinkSession(snapshot.link);
+    if (this.link) {
+      this.ensureLinkIntegrity(false);
+      if (!this.findLinkMove()) this.shuffleLink(false);
+    }
     this.match3 = this.restoreMatchSession(snapshot.match3);
     this.merge = snapshot.version >= 2 ? this.restoreMergeSession(snapshot.merge) : null;
     if (this.merge?.gameOver && !this.merge.rewardClaimed) this.finishMergeGame(false);
@@ -340,8 +344,10 @@ class HarvestCollection {
     if (!saved || !validBoard(saved.board, 5, 8, (value) => value == null || (Number.isInteger(value) && value >= 0 && value < LINK_SYMBOLS.length))) {
       return null;
     }
-    const board = cloneBoard(saved.board);
-    const selected = validCell(saved.selected, 5, 8) && board[saved.selected.row][saved.selected.col] != null
+    const repaired = Core.repairPairedBoard(saved.board, LINK_SYMBOLS.length);
+    if (!repaired.remaining) return null;
+    const board = repaired.board;
+    const selected = !repaired.repaired && validCell(saved.selected, 5, 8) && board[saved.selected.row][saved.selected.col] != null
       ? { row: saved.selected.row, col: saved.selected.col }
       : null;
     return {
@@ -364,8 +370,8 @@ class HarvestCollection {
       hint: null,
       selectedAt: 0,
       lockedUntil: 0,
-      pendingFinish: Boolean(saved.pendingFinish),
-      pendingShuffle: Boolean(saved.pendingShuffle)
+      pendingFinish: false,
+      pendingShuffle: repaired.repaired ? false : Boolean(saved.pendingShuffle)
     };
   }
 
@@ -430,6 +436,7 @@ class HarvestCollection {
   update(dt, shouldRender = true) {
     this.frameNow = this.now();
     if (this.state.petGarden.unlocked) Core.syncPetGarden(this.state, this.frameNow);
+    if (this.link) this.ensureLinkIntegrity(true);
     if (this.link?.pendingFinish && this.frameNow >= this.link.lockedUntil) {
       this.completeLinkBoard();
     } else if (this.link?.pendingShuffle && this.frameNow >= this.link.lockedUntil) {
@@ -3251,6 +3258,23 @@ class HarvestCollection {
       }
     }
     return null;
+  }
+
+  ensureLinkIntegrity(showMessage = false) {
+    if (!this.link) return false;
+    const repaired = Core.repairPairedBoard(this.link.board, LINK_SYMBOLS.length);
+    if (!repaired.repaired) return false;
+    this.link.board = repaired.board;
+    this.link.selected = null;
+    this.link.hint = null;
+    this.link.lastPath = null;
+    this.link.lastMatch = null;
+    this.link.invalidMatch = null;
+    this.link.shiftAnimation = null;
+    this.link.pendingFinish = repaired.remaining === 0;
+    this.link.pendingShuffle = repaired.remaining > 0 && !this.findLinkMove();
+    if (showMessage) this.showToast("检测到孤张，残局已自动补成一对", "good", 2200);
+    return true;
   }
 
   applyLinkFlow(startedAt) {
